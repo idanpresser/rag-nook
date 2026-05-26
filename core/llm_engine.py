@@ -90,7 +90,7 @@ class LMStudioHermesClient:
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.2,
-                response_format={"type": "json_object"}
+                response_format={"type": "text"}
             )
             raw_content = response.choices[0].message.content.strip()
         except Exception as e:
