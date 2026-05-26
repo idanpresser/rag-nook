@@ -95,3 +95,47 @@ def test_detect_knowledge_gaps(mock_vector_indexer, mocker):
     
     assert len(gaps["dangling_tags"]) >= 0
     assert len(gaps["gap_suggestions"]) >= 0
+
+def test_calculate_tsne_coordinates_with_none_embeddings(mocker):
+    # Mock ChromaDB returning None for embeddings key
+    indexer = mocker.Mock()
+    mock_collection = mocker.Mock()
+    mock_collection.get.return_value = {
+        "ids": ["seg-1", "seg-2"],
+        "metadatas": [{"tags": "personal"}, {"tags": "coding"}],
+        "embeddings": None
+    }
+    indexer.collection = mock_collection
+    
+    service = GapService(vector_indexer=indexer)
+    coords = service.calculate_tsne_coordinates()
+    
+    # Verify it falls back to structured coordinates instead of crashing
+    assert len(coords) == 2
+    assert coords[0]["category"] == "personal"
+    assert coords[1]["category"] == "coding"
+
+def test_calculate_tsne_coordinates_with_numpy_embeddings(mocker):
+    # Mock ChromaDB returning a numpy.ndarray for embeddings key
+    indexer = mocker.Mock()
+    mock_collection = mocker.Mock()
+    
+    # 2 samples, 128 dimensions each
+    np_embeddings = np.array([
+        [0.1] * 128,
+        [0.9] * 128
+    ])
+    
+    mock_collection.get.return_value = {
+        "ids": ["seg-1", "seg-2"],
+        "metadatas": [{"tags": "personal"}, {"tags": "coding"}],
+        "embeddings": np_embeddings
+    }
+    indexer.collection = mock_collection
+    
+    service = GapService(vector_indexer=indexer)
+    coords = service.calculate_tsne_coordinates()
+    
+    # Verify it runs t-SNE reduction successfully without raising truthiness errors on numpy array
+    assert len(coords) == 2
+

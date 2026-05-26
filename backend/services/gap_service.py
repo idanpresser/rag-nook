@@ -69,7 +69,7 @@ class GapService:
         metadatas = results.get("metadatas", [])
 
         # Fallback: if we don't have enough embeddings to compute t-SNE (minimum 2), generate structured grid coords
-        if not embeddings or len(embeddings) < 2:
+        if embeddings is None or len(embeddings) < 2:
             coords = []
             for i, item_id in enumerate(ids):
                 meta = metadatas[i] if i < len(metadatas) else {}
