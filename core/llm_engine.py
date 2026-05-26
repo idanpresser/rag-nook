@@ -1,5 +1,6 @@
 import re
 import json
+import threading
 from typing import Dict, Any, List
 from openai import OpenAI
 from config import config
@@ -19,6 +20,7 @@ class LMStudioHermesClient:
             timeout=30.0
         )
         self.model_name = config.llm_model_name
+        self._lock = threading.Lock()
 
     def summarize_text(self, text: str) -> str:
         """Sends raw text to the local LLM to generate a concise summary.
@@ -41,14 +43,15 @@ class LMStudioHermesClient:
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3
-            )
+            with self._lock:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.3
+                )
             return response.choices[0].message.content.strip()
         except Exception as e:
             return f"Summary generation failed. Error: {str(e)}"
@@ -83,15 +86,16 @@ class LMStudioHermesClient:
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.2,
-                response_format={"type": "text"}
-            )
+            with self._lock:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.2,
+                    response_format={"type": "text"}
+                )
             raw_content = response.choices[0].message.content.strip()
         except Exception as e:
             # Safe boundary fallback in case of connection errors
