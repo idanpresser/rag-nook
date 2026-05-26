@@ -1,63 +1,77 @@
 import pytest
 from pathlib import Path
-from core.scraper import ResilientScraper, DocumentCompiler
+import json
+from core.scraper import ResilientCrawl4AIScraper, DocumentCompiler
 
-def test_scraper_extract_article(mocker):
-    # Mock the HTTP response from requests
-    mock_response = mocker.Mock()
-    mock_response.status_code = 200
-    mock_response.text = (
-        "<html>"
-        "<head><title>Test Tech Blog</title></head>"
-        "<body>"
-        "<article>"
-        "<h1>Awesome Coding Tools</h1>"
-        "<p>This is a test article describing the benefits of modern coding pipelines.</p>"
-        "</article>"
-        "</body>"
-        "</html>"
+class MockCrawlResult:
+    """Mock result class matching Crawl4AI CrawlResult structure."""
+    def __init__(self, success=True, markdown="", extracted_content="Test Page", media=None):
+        self.success = success
+        self.markdown = markdown
+        self.extracted_content = extracted_content
+        self.media = media or {"images": []}
+
+def test_crawl4ai_scraper_extract_success(mocker):
+    mock_result = MockCrawlResult(
+        success=True,
+        markdown="This is core article body content with an image ![logo](https://example.com/logo.png).",
+        extracted_content="Awesome Programming Guide",
+        media={
+            "images": [
+                {"src": "https://example.com/logo.png", "alt": "logo"}
+            ]
+        }
     )
     
-    # Patch the session GET request
-    mocker.patch("requests.Session.get", return_value=mock_response)
+    # Mock the AsyncWebCrawler's arun method
+    mocker.patch("crawl4ai.AsyncWebCrawler.arun", return_value=mock_result)
     
-    scraper = ResilientScraper()
-    title, content = scraper.scrape("https://example.com/coding-tools")
+    scraper = ResilientCrawl4AIScraper()
+    title, markdown, images = scraper.scrape_url("https://example.com/guide")
     
-    assert title == "Test Tech Blog"
-    assert "Awesome Coding Tools" in content or "modern coding pipelines" in content
+    assert title == "Awesome Programming Guide"
+    assert "This is core article body" in markdown
+    assert len(images) == 1
+    assert images[0]["src"] == "https://example.com/logo.png"
+    assert images[0]["alt"] == "logo"
 
-def test_document_compiler_markdown(temp_workspace):
+def test_document_compiler_saves_markdown_with_clickable_cached_images(temp_workspace, mocker):
     scraped_dir = temp_workspace["scraped"]
     compiler = DocumentCompiler(scraped_dir=scraped_dir)
     
-    title = "UnigetUI Release Notes"
-    content = "# Release 3.1.1\n\n- Package Manager support for Windows winget.\n- Sleek UI changes."
-    slug = "unigetui-3-1-1"
+    title = "Test Guide with Images"
+    markdown = "Here is a logo: ![logo_alt](https://example.com/assets/logo.png) and some other text."
+    images = [
+        {"src": "https://example.com/assets/logo.png", "alt": "logo_alt"}
+    ]
+    slug = "test-guide-images"
     
-    md_path = compiler.save_markdown(title, content, slug)
+    # Mock the requests.get call for downloading the image
+    mock_img_response = mocker.Mock()
+    mock_img_response.status_code = 200
+    mock_img_response.content = b"fake-binary-image-content"
+    mocker.patch("requests.get", return_value=mock_img_response)
     
+    # Execute compiler saving
+    md_path = compiler.save_markdown_with_images(title, markdown, images, slug)
+    
+    # 1. Assert markdown file exists
     assert Path(md_path).exists()
-    assert md_path.endswith("unigetui-3-1-1.md")
+    assert md_path.endswith("test-guide-images.md")
     
-    saved_content = Path(md_path).read_text(encoding="utf-8")
-    assert "Release 3.1.1" in saved_content
-    assert "Package Manager support" in saved_content
-
-def test_document_compiler_pdf(temp_workspace):
-    scraped_dir = temp_workspace["scraped"]
-    compiler = DocumentCompiler(scraped_dir=scraped_dir)
+    # 2. Assert local image directory and downloaded file exist
+    local_img_dir = scraped_dir / "images" / slug
+    assert local_img_dir.exists()
     
-    title = "Painkillers vs Vitamins"
-    content = "This document describes the critical business comparison between painkillers and vitamins."
-    slug = "painkillers-vs-vitamins"
+    downloaded_img_path = local_img_dir / "1_logo.png"
+    assert downloaded_img_path.exists()
+    assert downloaded_img_path.read_bytes() == b"fake-binary-image-content"
     
-    pdf_path = compiler.save_pdf(title, content, slug)
+    # 3. Assert Markdown content has rewritten clickable links
+    saved_md_text = Path(md_path).read_text(encoding="utf-8")
     
-    assert Path(pdf_path).exists()
-    assert pdf_path.endswith("painkillers-vs-vitamins.pdf")
-    
-    # Ensure it's a valid PDF by checking the header signature
-    with open(pdf_path, "rb") as f:
-        signature = f.read(4)
-        assert signature == b"%PDF"
+    # Clickable image format: [![logo_alt](images/slug/local_filename)](original_remote_url)
+    expected_replacement = "[![logo_alt](images/test-guide-images/1_logo.png)](https://example.com/assets/logo.png)"
+    assert expected_replacement in saved_md_text
+    # Verify original unclickable Markdown image is removed
+    assert "![logo_alt](https://example.com/assets/logo.png)" not in saved_md_text
