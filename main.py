@@ -3,6 +3,7 @@ import argparse
 import re
 from pathlib import Path
 import json
+import concurrent.futures
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
@@ -14,6 +15,78 @@ from core.llm_engine import LMStudioHermesClient
 from core.vector_store import ChromaDBIndexer
 
 console = Console()
+
+def process_single_segment(
+    seg,
+    scraper: ResilientCrawl4AIScraper,
+    compiler: DocumentCompiler,
+    llm_client: LMStudioHermesClient,
+    vector_indexer: ChromaDBIndexer,
+    progress: Progress,
+    task_id
+) -> dict:
+    """Processes a single segment, runs local LLM enrichment, crawls embedded links, and indexes into ChromaDB thread-safely."""
+    try:
+        # Compile conversation text for LLM segment analysis
+        conversation_text = "\n".join([f"{msg.sender}: {msg.content}" for msg in seg.messages])
+
+        # Call local Hermes LLM to generate summary and tag list
+        enrichment = llm_client.enrich_message_segment(conversation_text)
+        seg.summary = enrichment.get("executive_summary", "")
+        seg.tags = enrichment.get("tags", [])
+
+        # Check and process messages containing external links
+        for msg in seg.messages:
+            if msg.media_type == "link" and msg.links:
+                for url in msg.links:
+                    # Resilient Crawl4AI scrape
+                    web_title, web_markdown, web_images = scraper.scrape_url(url)
+
+                    # Create clean file slug
+                    slug = re.sub(r"https?://", "", url)
+                    slug = re.sub(r"[^\w\-]", "_", slug)[:50]
+
+                    # Generate Markdown with locally cached clickable images
+                    md_path = compiler.save_markdown_with_images(web_title, web_markdown, web_images, slug)
+
+                    # Fetch concise page summary from local model
+                    web_summary = llm_client.summarize_text(web_markdown)
+
+                    # Save scraper outcomes to the message schema
+                    msg.summary = web_summary
+                    msg.tags.extend(["scraped-web", slug])
+
+        # Prepare unified text context document block for Vector DB search
+        vector_document = (
+            f"[Context Segment: {seg.segment_id} | Range: {seg.start_time} to {seg.end_time}]\n"
+            f"[Summary: {seg.summary}]\n"
+            f"[Tags: {', '.join(seg.tags)}]\n"
+            f"Conversation log:\n{conversation_text}"
+        )
+
+        # Define indexing metadata
+        vector_metadata = {
+            "segment_id": seg.segment_id,
+            "start_time": seg.start_time,
+            "end_time": seg.end_time,
+            "has_links": int(any(msg.media_type == "link" for msg in seg.messages)),
+            "tags": ", ".join(seg.tags)
+        }
+
+        # Index document chunk into local database
+        vector_indexer.add_documents(
+            documents=[vector_document],
+            ids=[seg.segment_id],
+            metadatas=[vector_metadata]
+        )
+    except Exception as e:
+        seg.summary = f"Processing Failed. Error: {str(e)}"
+        seg.tags = ["error", "segment-failed"]
+    finally:
+        # Advance rich progress bar thread-safely
+        progress.advance(task_id)
+
+    return seg.model_dump(mode="json")
 
 def run_pipeline(chat_path: Path) -> None:
     """Executes the entire WhatsApp chat ETL, Scraping, Hermes enrichment, and ChromaDB indexing pipeline."""
@@ -44,7 +117,7 @@ def run_pipeline(chat_path: Path) -> None:
     llm_client = LMStudioHermesClient()
     vector_indexer = ChromaDBIndexer()
 
-    console.print("🧠 [bold yellow]Phases 3-5:[/bold yellow] Scraping links, running Hermes local LLM enrichment, and vector indexing...")
+    console.print("🧠 [bold yellow]Phases 3-5:[/bold yellow] Running concurrent pipeline (4 parallel agents) for link crawling & LLM inference...")
 
     enriched_segments = []
 
@@ -55,64 +128,34 @@ def run_pipeline(chat_path: Path) -> None:
         MofNCompleteColumn(),
         transient=True
     ) as progress:
-        task = progress.add_task("[cyan]Processing turns and fetching web pages...[/cyan]", total=len(segments))
+        task_id = progress.add_task("[cyan]Processing turns concurrently...[/cyan]", total=len(segments))
 
-        for seg in segments:
-            # Compile conversation text for LLM segment analysis
-            conversation_text = "\n".join([f"{msg.sender}: {msg.content}" for msg in seg.messages])
-
-            # Call local Hermes LLM to generate summary and tag list
-            enrichment = llm_client.enrich_message_segment(conversation_text)
-            seg.summary = enrichment.get("executive_summary", "")
-            seg.tags = enrichment.get("tags", [])
-
-            # Check and process messages containing external links
-            for msg in seg.messages:
-                if msg.media_type == "link" and msg.links:
-                    for url in msg.links:
-                        # Resilient Crawl4AI scrape
-                        web_title, web_markdown, web_images = scraper.scrape_url(url)
-
-                        # Create clean file slug
-                        slug = re.sub(r"https?://", "", url)
-                        slug = re.sub(r"[^\w\-]", "_", slug)[:50]
-
-                        # Generate Markdown with locally cached clickable images
-                        md_path = compiler.save_markdown_with_images(web_title, web_markdown, web_images, slug)
-
-                        # Fetch concise page summary from local model
-                        web_summary = llm_client.summarize_text(web_markdown)
-
-                        # Save scraper outcomes to the message schema
-                        msg.summary = web_summary
-                        msg.tags.extend(["scraped-web", slug])
-
-            # Prepare unified text context document block for Vector DB search
-            vector_document = (
-                f"[Context Segment: {seg.segment_id} | Range: {seg.start_time} to {seg.end_time}]\n"
-                f"[Summary: {seg.summary}]\n"
-                f"[Tags: {', '.join(seg.tags)}]\n"
-                f"Conversation log:\n{conversation_text}"
-            )
-
-            # Define indexing metadata
-            vector_metadata = {
-                "segment_id": seg.segment_id,
-                "start_time": seg.start_time,
-                "end_time": seg.end_time,
-                "has_links": int(any(msg.media_type == "link" for msg in seg.messages)),
-                "tags": ", ".join(seg.tags)
+        # Use ThreadPoolExecutor with 4 concurrent agent workers
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            # Map futures to segments
+            futures = {
+                executor.submit(
+                    process_single_segment,
+                    seg,
+                    scraper,
+                    compiler,
+                    llm_client,
+                    vector_indexer,
+                    progress,
+                    task_id
+                ): seg for seg in segments
             }
+            
+            # Gather results as they complete
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    enriched_segments.append(result)
+                except Exception as e:
+                    console.print(f"[bold red]Thread Execution Error:[/bold red] {str(e)}")
 
-            # Index document chunk into local database
-            vector_indexer.add_documents(
-                documents=[vector_document],
-                ids=[seg.segment_id],
-                metadatas=[vector_metadata]
-            )
-
-            enriched_segments.append(seg.model_dump(mode="json"))
-            progress.advance(task)
+    # Sort enriched segments by segment_id sequence to maintain strict chronological order
+    enriched_segments.sort(key=lambda x: int(x["segment_id"].split("-")[1]))
 
     # Save final structured JSON database
     output_path = config.output_dir / "parsed_chat.json"
