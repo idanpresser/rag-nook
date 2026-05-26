@@ -37,3 +37,6 @@ parsed_chat.json
 .vscode/
 *.swp
 *.swo
+
+# Scratch folders
+scratch/

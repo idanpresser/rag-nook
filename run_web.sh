@@ -22,12 +22,21 @@ else
     exit 1
 fi
 
-# 2. Start Uvicorn ASGI Web Server
-echo "🚀 Starting Uvicorn API Server on http://localhost:8000..."
-echo "📁 API Swagger Docs are available at http://localhost:8000/docs"
-echo "Press Ctrl+C to stop the server."
-echo "-----------------------------------------------------------------"
+# 2. Start Concurrent Servers
+echo "🚀 Starting concurrent developer services..."
 
-# Run uvicorn pointing to backend.app
-PYTHONPATH=. uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
+# Clean up trap to terminate all child processes on exit (Ctrl+C)
+trap 'echo "🛑 Stopping services..."; kill $(jobs -p) 2>/dev/null' EXIT
+
+# Start FastAPI Backend in background
+echo "⚡ Starting FastAPI backend on http://127.0.0.1:8000..."
+PYTHONPATH=. uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload &
+
+# Start Vite React Frontend
+echo "💻 Starting Vite React frontend..."
+cd "$PROJECT_DIR"/frontend
+/opt/homebrew/bin/npm run dev &
+
+# Wait for all background jobs to finish
+wait
 
