@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import urllib.parse
 import requests
 from pathlib import Path
 from typing import Tuple, Dict, Any, List
@@ -104,8 +105,23 @@ class DocumentCompiler:
             if not src or not src.startswith("http"):
                 continue
 
-            # Generate standard filename from URL
-            url_filename = src.split("/")[-1].split("?")[0]
+            # Safe encode the URL for requests and regex matching (e.g. handle Hebrew characters)
+            try:
+                parts = urllib.parse.urlsplit(src)
+                path = urllib.parse.quote(urllib.parse.unquote(parts.path))
+                query = urllib.parse.quote(urllib.parse.unquote(parts.query), safe="=&")
+                fragment = urllib.parse.quote(urllib.parse.unquote(parts.fragment))
+                src_encoded = urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, query, fragment))
+            except Exception:
+                src_encoded = src
+
+            # Generate standard filename from URL (use unquoted version to get a cleaner readable name)
+            try:
+                unquoted_src = urllib.parse.unquote(src)
+                url_filename = unquoted_src.split("/")[-1].split("?")[0]
+            except Exception:
+                url_filename = src.split("/")[-1].split("?")[0]
+                
             # Ensure filename is clean and has a fallback extension
             url_filename = re.sub(r"[^\w\-\.]", "_", url_filename)
             if not url_filename or "." not in url_filename:
@@ -115,20 +131,38 @@ class DocumentCompiler:
 
             # Download and save the image locally
             try:
-                img_response = requests.get(src, timeout=5, headers={"User-Agent": config.user_agent})
+                img_response = requests.get(src_encoded, timeout=5, headers={"User-Agent": config.user_agent})
                 if img_response.status_code == 200:
                     img_filepath = local_img_dir / local_filename
                     with open(img_filepath, "wb") as f:
                         f.write(img_response.content)
 
-                    # Regex match standard markdown image embeds for this specific src URL
-                    # Matches: ![alt_text](src) or ![alt_text](src "title")
-                    pattern = re.compile(rf"!\[([^\]]*?)\]\({re.escape(src)}(?:\s+[\"\'].*?[\"\'])?\)")
-                    
-                    # Rewrite as clickable locally cached image:
-                    # [![alt_text](images/slug/local_filename)](original_remote_url)
                     local_rel_path = f"images/{clean_slug}/{local_filename}"
-                    compiled_markdown = pattern.sub(rf"[![\1]({local_rel_path})]({src})", compiled_markdown)
+
+                    # Try to replace all possible variants of src in markdown:
+                    # 1. src_encoded (standard percent-encoded)
+                    # 2. unquoted version (unicode Hebrew)
+                    # 3. raw src
+                    # 4. Relative path versions
+                    variants = {src, src_encoded, urllib.parse.unquote(src)}
+                    for v in list(variants):
+                        try:
+                            parsed_v = urllib.parse.urlsplit(v)
+                            variants.add(parsed_v.path)
+                            variants.add(parsed_v.path.lstrip("/"))
+                        except Exception:
+                            pass
+
+                    for var in variants:
+                        if not var:
+                            continue
+                        # Regex match standard markdown image embeds for this specific src URL
+                        # Matches: ![alt_text](src) or ![alt_text](src "title")
+                        pattern = re.compile(rf"!\[([^\]]*?)\]\({re.escape(var)}(?:\s+[\"\'].*?[\"\'])?\)")
+                        
+                        # Rewrite as clickable locally cached image:
+                        # [![alt_text](images/slug/local_filename)](original_remote_url)
+                        compiled_markdown = pattern.sub(rf"[![\1]({local_rel_path})]({src_encoded})", compiled_markdown)
             except Exception:
                 # Gracefully skip if image download fails, leaving original link intact
                 continue

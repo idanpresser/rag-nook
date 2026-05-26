@@ -75,3 +75,43 @@ def test_document_compiler_saves_markdown_with_clickable_cached_images(temp_work
     assert expected_replacement in saved_md_text
     # Verify original unclickable Markdown image is removed
     assert "![logo_alt](https://example.com/assets/logo.png)" not in saved_md_text
+
+def test_document_compiler_handles_hebrew_percent_encoded_images(temp_workspace, mocker):
+    scraped_dir = temp_workspace["scraped"]
+    compiler = DocumentCompiler(scraped_dir=scraped_dir)
+    
+    title = "Hebrew Image Guide"
+    
+    # Markdown contains percent-encoded Hebrew image URL
+    markdown = "Here is a webinar image: ![וובינר](https://letsai.co.il/wp-content/uploads/2022/06/%D7%95%D7%95%D7%91%D7%99%D7%A0%D7%A8-AI.jpg)"
+    
+    # Crawl4AI returns Unicode Hebrew image URL in its images metadata list
+    images = [
+        {"src": "https://letsai.co.il/wp-content/uploads/2022/06/וובינר-AI.jpg", "alt": "וובינר"}
+    ]
+    slug = "hebrew-guide"
+    
+    mock_img_response = mocker.Mock()
+    mock_img_response.status_code = 200
+    mock_img_response.content = b"hebrew-image-binary-data"
+    mocker.patch("requests.get", return_value=mock_img_response)
+    
+    # Execute compiler saving
+    md_path = compiler.save_markdown_with_images(title, markdown, images, slug)
+    
+    assert Path(md_path).exists()
+    
+    # Verify the image was downloaded successfully
+    local_img_dir = scraped_dir / "images" / slug
+    assert local_img_dir.exists()
+    
+    # Verify the filename was cleaned and preserved
+    downloaded_img_path = local_img_dir / "1_וובינר-AI.jpg"
+    assert downloaded_img_path.exists()
+    assert downloaded_img_path.read_bytes() == b"hebrew-image-binary-data"
+    
+    # Verify the Markdown content replaced the percent-encoded URL in the text with the local relative path
+    saved_md_text = Path(md_path).read_text(encoding="utf-8")
+    expected_replacement = "[![וובינר](images/hebrew-guide/1_וובינר-AI.jpg)](https://letsai.co.il/wp-content/uploads/2022/06/%D7%95%D7%95%D7%91%D7%99%D7%A0%D7%A8-AI.jpg)"
+    assert expected_replacement in saved_md_text
+
