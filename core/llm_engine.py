@@ -13,11 +13,11 @@ class LMStudioHermesClient:
 
     def __init__(self):
         # LM Studio exposes an OpenAI-compatible endpoint locally
-        # Use a timeout of 30.0 seconds to allow local model inference time
+        # Use a timeout of 180.0 seconds to allow local model inference time
         self.client = OpenAI(
             base_url=config.lm_studio_base_url,
             api_key=config.lm_studio_api_key,
-            timeout=30.0
+            timeout=180.0
         )
         self.model_name = config.llm_model_name
         self._lock = threading.Lock()
