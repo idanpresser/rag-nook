@@ -9,7 +9,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCo
 from config import config
 from core.parser import WhatsAppParser
 from core.preprocessor import Preprocessor
-from core.scraper import ResilientScraper, DocumentCompiler
+from core.scraper import ResilientCrawl4AIScraper, DocumentCompiler
 from core.llm_engine import LMStudioHermesClient
 from core.vector_store import ChromaDBIndexer
 
@@ -39,7 +39,7 @@ def run_pipeline(chat_path: Path) -> None:
     console.print(f"✔️ Grouped conversation into [bold green]{len(segments)}[/bold green] conversational segments.")
 
     # Initialize Phase 3, 4, and 5 clients
-    scraper = ResilientScraper()
+    scraper = ResilientCrawl4AIScraper()
     compiler = DocumentCompiler()
     llm_client = LMStudioHermesClient()
     vector_indexer = ChromaDBIndexer()
@@ -70,19 +70,18 @@ def run_pipeline(chat_path: Path) -> None:
             for msg in seg.messages:
                 if msg.media_type == "link" and msg.links:
                     for url in msg.links:
-                        # Resilient scrape
-                        web_title, web_body = scraper.scrape(url)
+                        # Resilient Crawl4AI scrape
+                        web_title, web_markdown, web_images = scraper.scrape_url(url)
 
                         # Create clean file slug
                         slug = re.sub(r"https?://", "", url)
                         slug = re.sub(r"[^\w\-]", "_", slug)[:50]
 
-                        # Generate Markdown and PDF exports
-                        md_path = compiler.save_markdown(web_title, web_body, slug)
-                        pdf_path = compiler.save_pdf(web_title, web_body, slug)
+                        # Generate Markdown with locally cached clickable images
+                        md_path = compiler.save_markdown_with_images(web_title, web_markdown, web_images, slug)
 
                         # Fetch concise page summary from local model
-                        web_summary = llm_client.summarize_text(web_body)
+                        web_summary = llm_client.summarize_text(web_markdown)
 
                         # Save scraper outcomes to the message schema
                         msg.summary = web_summary
