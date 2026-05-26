@@ -1,0 +1,39 @@
+# Python Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# Python compiled cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest and coverage reports
+.pytest_cache/
+.coverage
+htmlcov/
+.cov/
+.coverage.*
+.cache/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Generated data output and artifacts
+output/
+scraped_pages/
+vector_db/
+parsed_chat.json
+
+# Local IDE configuration
+.idea/
+.vscode/
+*.swp
+*.swo
