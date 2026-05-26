@@ -9,7 +9,7 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 from config import config
 from core.parser import WhatsAppParser
-from core.preprocessor import Preprocessor
+from core.preprocessor import Preprocessor, ScrapedURLMetadata
 from core.scraper import ResilientCrawl4AIScraper, DocumentCompiler
 from core.llm_engine import LMStudioHermesClient
 from core.vector_store import ChromaDBIndexer
@@ -49,18 +49,55 @@ def process_single_segment(
                     # Generate Markdown with locally cached clickable images
                     md_path = compiler.save_markdown_with_images(web_title, web_markdown, web_images, slug)
 
-                    # Fetch concise page summary from local model
-                    web_summary = llm_client.summarize_text(web_markdown)
+                    # Fetch structured page enrichment from local model (summary, tags, categories)
+                    web_enrichment = llm_client.enrich_webpage_content(web_markdown)
+                    web_summary = web_enrichment.get("executive_summary", "")
+                    web_tags = web_enrichment.get("tags", [])
+                    web_categories = web_enrichment.get("categories", [])
 
                     # Save scraper outcomes to the message schema
+                    metadata_obj = ScrapedURLMetadata(
+                        url=url,
+                        title=web_title,
+                        slug=slug,
+                        markdown_path=md_path,
+                        executive_summary=web_summary,
+                        tags=web_tags,
+                        categories=web_categories
+                    )
+                    msg.scraped_urls.append(metadata_obj)
+
+                    # For backward compatibility and search indexing
                     msg.summary = web_summary
                     msg.tags.extend(["scraped-web", slug])
+                    msg.tags.extend(web_tags)
+                    msg.tags.extend(web_categories)
+
+        # Compile any crawled URL contexts
+        crawled_url_contexts = []
+        all_web_tags = []
+        all_web_categories = []
+        for msg in seg.messages:
+            for scraped in msg.scraped_urls:
+                crawled_url_contexts.append(
+                    f"- Webpage: {scraped.title} ({scraped.url})\n"
+                    f"  Summary: {scraped.executive_summary}\n"
+                    f"  Categories: {', '.join(scraped.categories)}\n"
+                    f"  Tags: {', '.join(scraped.tags)}"
+                )
+                all_web_tags.extend(scraped.tags)
+                all_web_categories.extend(scraped.categories)
+        
+        crawled_section = ""
+        if crawled_url_contexts:
+            crawled_section = "\nCrawled Webpages Context:\n" + "\n".join(crawled_url_contexts) + "\n"
 
         # Prepare unified text context document block for Vector DB search
         vector_document = (
             f"[Context Segment: {seg.segment_id} | Range: {seg.start_time} to {seg.end_time}]\n"
             f"[Summary: {seg.summary}]\n"
             f"[Tags: {', '.join(seg.tags)}]\n"
+            f"{crawled_section}"
             f"Conversation log:\n{conversation_text}"
         )
 
@@ -70,7 +107,8 @@ def process_single_segment(
             "start_time": seg.start_time,
             "end_time": seg.end_time,
             "has_links": int(any(msg.media_type == "link" for msg in seg.messages)),
-            "tags": ", ".join(seg.tags)
+            "tags": ", ".join(list(set(seg.tags + all_web_tags))),
+            "categories": ", ".join(list(set(all_web_categories)))
         }
 
         # Index document chunk into local database

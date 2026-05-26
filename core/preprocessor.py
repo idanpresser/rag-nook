@@ -4,6 +4,15 @@ from pydantic import BaseModel, Field
 from core.parser import RawMessage
 from config import config
 
+class ScrapedURLMetadata(BaseModel):
+    url: str
+    title: str
+    slug: str
+    markdown_path: str
+    executive_summary: str
+    tags: List[str] = Field(default_factory=list)
+    categories: List[str] = Field(default_factory=list)
+
 class EnrichedMessage(BaseModel):
     message_id: str
     datetime_utc: str
@@ -14,6 +23,8 @@ class EnrichedMessage(BaseModel):
     attachments: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
+    scraped_urls: List[ScrapedURLMetadata] = Field(default_factory=list)
+
 
 class ConversationSegment(BaseModel):
     segment_id: str

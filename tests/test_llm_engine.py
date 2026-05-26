@@ -73,3 +73,40 @@ def test_enrich_message_segment_invalid_json(mocker):
     assert "executive_summary" in result
     assert "tags" in result
     assert "error" in result["tags"] or "raw_response" in result
+
+def test_enrich_webpage_content_success(mocker):
+    json_data = {
+        "executive_summary": "Guide on building production-grade LLM applications.",
+        "tags": ["llm", "agents", "langchain"],
+        "categories": ["AI-Agent", "Software-Engineering"]
+    }
+    mock_choices = [
+        mocker.Mock(message=mocker.Mock(content=json.dumps(json_data)))
+    ]
+    mock_response = mocker.Mock(choices=mock_choices)
+    mocker.patch("openai.resources.chat.completions.Completions.create", return_value=mock_response)
+    
+    client = LMStudioHermesClient()
+    result = client.enrich_webpage_content("Building agents in production...")
+    
+    assert result["executive_summary"] == "Guide on building production-grade LLM applications."
+    assert "agents" in result["tags"]
+    assert "AI-Agent" in result["categories"]
+
+def test_enrich_webpage_content_fallback(mocker):
+    # Mock completely broken JSON response to test resilient recovery
+    mock_choices = [
+        mocker.Mock(message=mocker.Mock(content="Unstructured raw content response from the model."))
+    ]
+    mock_response = mocker.Mock(choices=mock_choices)
+    mocker.patch("openai.resources.chat.completions.Completions.create", return_value=mock_response)
+    
+    client = LMStudioHermesClient()
+    result = client.enrich_webpage_content("Building agents in production...")
+    
+    assert "executive_summary" in result
+    assert "tags" in result
+    assert "categories" in result
+    assert "error" in result["tags"]
+    assert "error" in result["categories"]
+
