@@ -39,7 +39,16 @@ class GapService:
                     combined.extend([c.strip().lower() for c in categories_str.split(",") if c.strip()])
 
                 # Filter out standard system errors
-                ignored = {"error", "connection-failed", "scraped-web", "unparsed-json"}
+                ignored = {
+                    "error", 
+                    "connection-failed", 
+                    "scraped-web", 
+                    "unparsed-json", 
+                    "llm-failed", 
+                    "crawl-failed", 
+                    "segment-failed", 
+                    "uncategorized"
+                }
                 for item in combined:
                     if item not in ignored and not item.startswith("seg-"):
                         heatmap[item] = heatmap.get(item, 0) + 1
@@ -154,7 +163,16 @@ class GapService:
                         if not is_scraped:
                             broken_urls.append(url)
                             # Segment tags that aren't system fallbacks are added to dangling tags
-                            ignored = {"error", "connection-failed", "scraped-web", "unparsed-json"}
+                            ignored = {
+                                "error", 
+                                "connection-failed", 
+                                "scraped-web", 
+                                "unparsed-json", 
+                                "llm-failed", 
+                                "crawl-failed", 
+                                "segment-failed", 
+                                "uncategorized"
+                            }
                             for t in seg_tags:
                                 if t not in ignored and not t.startswith("seg-"):
                                     dangling_tags.add(t)

@@ -3,6 +3,7 @@ import re
 import asyncio
 import urllib.parse
 import requests
+import concurrent.futures
 from pathlib import Path
 from typing import Tuple, Dict, Any, List
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
@@ -25,6 +26,8 @@ class ResilientCrawl4AIScraper:
     def scrape_url(self, url: str) -> Tuple[str, str, List[Dict[str, Any]]]:
         """Runs the asynchronous Crawl4AI crawler synchronously using an event loop.
 
+        Automatically detects running event loops and delegates to a separate thread if needed to avoid event loop collisions.
+
         Args:
             url: The HTTP/HTTPS target link.
 
@@ -32,7 +35,19 @@ class ResilientCrawl4AIScraper:
             A tuple of (title, clean_markdown, list_of_image_dicts).
         """
         try:
-            return asyncio.run(self._async_scrape(url))
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                # If there's already a running event loop (e.g. inside FastAPI/Uvicorn),
+                # delegate execution to a separate thread to run asyncio.run safely.
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(lambda: asyncio.run(self._async_scrape(url)))
+                    return future.result()
+            else:
+                return asyncio.run(self._async_scrape(url))
         except Exception as e:
             # Fallback gracefully if event loop or scraping fails
             return f"Crawl Failed: {url}", f"Unable to crawl webpage content. Error: {str(e)}", []
@@ -131,7 +146,7 @@ class DocumentCompiler:
 
             # Download and save the image locally
             try:
-                img_response = requests.get(src_encoded, timeout=5, headers={"User-Agent": config.user_agent})
+                img_response = requests.get(src_encoded, timeout=config.request_timeout_seconds, headers={"User-Agent": config.user_agent})
                 if img_response.status_code == 200:
                     img_filepath = local_img_dir / local_filename
                     with open(img_filepath, "wb") as f:

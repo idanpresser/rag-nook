@@ -1,4 +1,4 @@
-# 🧠 Insights Explorer: The Personal Memory & Web Context RAG Dashboard
+# 🧠 RAGnook: The Personal Memory & Web Context RAG Dashboard
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?style=flat-square&logo=python)](https://www.python.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
@@ -7,7 +7,8 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-0.4.0+-orange.svg?style=flat-square)](https://www.trychroma.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
-**Insights Explorer** is a high-density, beautifully aesthetic Apple/Linear-style **Retrieval-Augmented Generation (RAG) Personal Memory Dashboard**. It parses WhatsApp conversation logs, extracts shared links, scrapes dynamic web content via modern headless crawlers, processes articles through localized LLMs, indexes them into a local vector database, and presents the insights in an interactive, visual search interface.
+**RAGnook** is a high-density, beautifully aesthetic Apple/Linear-style **Retrieval-Augmented Generation (RAG) Personal Memory Dashboard**. It parses WhatsApp conversation logs, extracts shared links, scrapes dynamic web content via modern headless crawlers, processes articles through localized LLMs, indexes them into a local vector database, and presents the insights in an interactive, visual search interface.
+
 
 ---
 

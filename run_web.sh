@@ -35,7 +35,7 @@ PYTHONPATH=. uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload &
 # Start Vite React Frontend
 echo "💻 Starting Vite React frontend..."
 cd "$PROJECT_DIR"/frontend
-/opt/homebrew/bin/npm run dev &
+npm run dev &
 
 # Wait for all background jobs to finish
 wait

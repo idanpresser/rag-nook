@@ -110,3 +110,45 @@ def test_enrich_webpage_content_fallback(mocker):
     assert "error" in result["tags"]
     assert "error" in result["categories"]
 
+def test_ensure_model_loaded_sdk_disabled(mocker):
+    mocker.patch("core.llm_engine.config.lms_sdk_enabled", False)
+    
+    client = LMStudioHermesClient()
+    result = client.ensure_model_loaded("google/gemma-4-e2b")
+    assert result is False
+
+def test_ensure_model_loaded_sdk_enabled_loaded(mocker):
+    mocker.patch("core.llm_engine.config.lms_sdk_enabled", True)
+    
+    mock_loaded = [mocker.Mock(identifier="google/gemma-4-e2b")]
+    mocker.patch("lmstudio.list_loaded_models", return_value=mock_loaded)
+    
+    client = LMStudioHermesClient()
+    result = client.ensure_model_loaded("google/gemma-4-e2b")
+    assert result is True
+
+def test_ensure_model_loaded_sdk_enabled_not_loaded(mocker):
+    mocker.patch("core.llm_engine.config.lms_sdk_enabled", True)
+    
+    mock_loaded = [mocker.Mock(identifier="nvidia/nemotron-3-nano-4b")]
+    mocker.patch("lmstudio.list_loaded_models", return_value=mock_loaded)
+    mock_llm = mocker.patch("lmstudio.llm", return_value=mocker.Mock())
+    
+    client = LMStudioHermesClient()
+    result = client.ensure_model_loaded("google/gemma-4-e2b")
+    assert result is True
+    mock_llm.assert_called_once_with("google/gemma-4-e2b")
+
+def test_synthesize_answer(mocker):
+    mock_choices = [
+        mocker.Mock(message=mocker.Mock(content="Here is a RAG search response."))
+    ]
+    mock_response = mocker.Mock(choices=mock_choices)
+    mock_fallback = mocker.patch("core.llm_engine.LMStudioHermesClient._execute_completion_with_fallback", return_value=mock_response)
+    
+    client = LMStudioHermesClient()
+    answer = client.synthesize_answer("test query", "retrieved context chunks")
+    
+    assert answer == "Here is a RAG search response."
+    mock_fallback.assert_called_once()
+

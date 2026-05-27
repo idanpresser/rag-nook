@@ -26,11 +26,30 @@ htmlcov/
 ehthumbs.db
 Thumbs.db
 
+# Prevent pushing user's personal chat data
+chat.txt
+chat.txt.copy
+chat_bak.txt
+
 # Generated data output and artifacts
 output/
 scraped_pages/
 vector_db/
 parsed_chat.json
+pipeline_tasks.json
+lms_settings.json
+
+# Local database caches
+*.db
+*.sqlite
+
+# Local environment secrets and overrides
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*.local
 
 # Local IDE configuration
 .idea/
@@ -40,3 +59,17 @@ parsed_chat.json
 
 # Scratch folders
 scratch/
+
+# Node/React dependencies and builds (Frontend artifacts)
+frontend/node_modules/
+frontend/dist/
+frontend/.eslintcache
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# Prevent pushing custom prompt structures except the base one
+*prompt*
+!base_prompt.md
+

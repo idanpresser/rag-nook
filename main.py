@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 import json
 import concurrent.futures
+import datetime
+import threading
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
@@ -16,149 +18,305 @@ from core.vector_store import ChromaDBIndexer
 
 console = Console()
 
-def process_single_segment(
-    seg,
-    scraper: ResilientCrawl4AIScraper,
-    compiler: DocumentCompiler,
-    llm_client: LMStudioHermesClient,
-    vector_indexer: ChromaDBIndexer,
-    progress: Progress,
-    task_id
-) -> dict:
-    """Processes a single segment, runs local LLM enrichment, crawls embedded links, and indexes into ChromaDB thread-safely."""
-    try:
-        # Compile conversation text for LLM segment analysis
-        conversation_text = "\n".join([f"{msg.sender}: {msg.content}" for msg in seg.messages])
-
-        # Call local Hermes LLM to generate summary and tag list
-        enrichment = llm_client.enrich_message_segment(conversation_text)
-        seg.summary = enrichment.get("executive_summary", "")
-        seg.tags = enrichment.get("tags", [])
-
-        # Check and process messages containing external links
-        for msg in seg.messages:
-            if msg.media_type == "link" and msg.links:
-                for url in msg.links:
-                    # Resilient Crawl4AI scrape
-                    web_title, web_markdown, web_images = scraper.scrape_url(url)
-
-                    # Create clean file slug
-                    slug = re.sub(r"https?://", "", url)
-                    slug = re.sub(r"[^\w\-]", "_", slug)[:50]
-
-                    # Generate Markdown with locally cached clickable images
-                    md_path = compiler.save_markdown_with_images(web_title, web_markdown, web_images, slug)
-
-                    # Fetch structured page enrichment from local model (summary, tags, categories)
-                    web_enrichment = llm_client.enrich_webpage_content(web_markdown)
-                    web_summary = web_enrichment.get("executive_summary", "")
-                    web_tags = web_enrichment.get("tags", [])
-                    web_categories = web_enrichment.get("categories", [])
-
-                    # Save scraper outcomes to the message schema
-                    metadata_obj = ScrapedURLMetadata(
-                        url=url,
-                        title=web_title,
-                        slug=slug,
-                        markdown_path=md_path,
-                        executive_summary=web_summary,
-                        tags=web_tags,
-                        categories=web_categories
-                    )
-                    msg.scraped_urls.append(metadata_obj)
-
-                    # For backward compatibility and search indexing
-                    msg.summary = web_summary
-                    msg.tags.extend(["scraped-web", slug])
-                    msg.tags.extend(web_tags)
-                    msg.tags.extend(web_categories)
-
-        # Compile any crawled URL contexts
-        crawled_url_contexts = []
-        all_web_tags = []
-        all_web_categories = []
-        for msg in seg.messages:
-            for scraped in msg.scraped_urls:
-                crawled_url_contexts.append(
-                    f"- Webpage: {scraped.title} ({scraped.url})\n"
-                    f"  Summary: {scraped.executive_summary}\n"
-                    f"  Categories: {', '.join(scraped.categories)}\n"
-                    f"  Tags: {', '.join(scraped.tags)}"
-                )
-                all_web_tags.extend(scraped.tags)
-                all_web_categories.extend(scraped.categories)
-        
-        crawled_section = ""
-        if crawled_url_contexts:
-            crawled_section = "\nCrawled Webpages Context:\n" + "\n".join(crawled_url_contexts) + "\n"
-
-        # Prepare unified text context document block for Vector DB search
-        vector_document = (
-            f"[Context Segment: {seg.segment_id} | Range: {seg.start_time} to {seg.end_time}]\n"
-            f"[Summary: {seg.summary}]\n"
-            f"[Tags: {', '.join(seg.tags)}]\n"
-            f"{crawled_section}"
-            f"Conversation log:\n{conversation_text}"
-        )
-
-        # Define indexing metadata
-        vector_metadata = {
-            "segment_id": seg.segment_id,
-            "start_time": seg.start_time,
-            "end_time": seg.end_time,
-            "has_links": int(any(msg.media_type == "link" for msg in seg.messages)),
-            "tags": ", ".join(list(set(seg.tags + all_web_tags))),
-            "categories": ", ".join(list(set(all_web_categories)))
-        }
-
-        # Index document chunk into local database
-        vector_indexer.add_documents(
-            documents=[vector_document],
-            ids=[seg.segment_id],
-            metadatas=[vector_metadata]
-        )
-    except Exception as e:
-        seg.summary = f"Processing Failed. Error: {str(e)}"
-        seg.tags = ["error", "segment-failed"]
-    finally:
-        # Advance rich progress bar thread-safely
-        progress.advance(task_id)
-
-    return seg.model_dump(mode="json")
-
-def run_pipeline(chat_path: Path) -> None:
-    """Executes the entire WhatsApp chat ETL, Scraping, Hermes enrichment, and ChromaDB indexing pipeline."""
+def run_pipeline(chat_path: Path, reset: bool = False) -> None:
+    """Executes the entire WhatsApp chat ETL, concurrent URL scraping, serial LLM enrichment, and ChromaDB indexing pipeline."""
     # Ensure all directories are initialized
     config.initialize_directories()
 
     console.print("[bold cyan]🚀 Starting WhatsApp Chat Processing Pipeline[/bold cyan]")
 
+    # Centralized Task State Tracking Initialization
+    tasks_path = config.output_dir / "pipeline_tasks.json"
+    if reset and tasks_path.exists():
+        try:
+            tasks_path.unlink()
+            console.print("[bold yellow]🔄 Reset requested. Deleted existing pipeline_tasks.json state.[/bold yellow]")
+        except Exception as e:
+            console.print(f"[bold red]⚠️ Reset Failed to delete existing state file:[/bold red] {str(e)}")
+
+    state = {
+        "meta": {
+            "status": "in_progress",
+            "total_urls": 0,
+            "completed_urls": 0,
+            "total_segments": 0,
+            "completed_segments": 0,
+            "updated_at": ""
+        },
+        "steps": {
+            "parsing": { "status": "pending", "error": None },
+            "segmentation": { "status": "pending", "error": None },
+            "scraping": { "status": "pending", "error": None },
+            "llm_enrichment": { "status": "pending", "error": None }
+        },
+        "urls": {},
+        "segments": {}
+    }
+
+    if tasks_path.exists():
+        try:
+            with open(tasks_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            console.print("[bold green]🔄 Loaded existing pipeline tasks state. Resuming where we left off...[/bold green]")
+        except Exception as e:
+            console.print(f"[bold yellow]⚠️ Failed to load existing tasks JSON ({str(e)}). Starting fresh...[/bold yellow]")
+
+    state_lock = threading.Lock()
+
+    def save_state():
+        with state_lock:
+            state["meta"]["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            
+            # Recalculate meta counts
+            total_urls = len(state["urls"])
+            completed_urls = sum(1 for u in state["urls"].values() if u.get("crawl_status") == "done" and u.get("llm_status") == "done")
+            total_segments = len(state["segments"])
+            completed_segments = sum(1 for s in state["segments"].values() if s.get("status") == "done")
+            
+            state["meta"]["total_urls"] = total_urls
+            state["meta"]["completed_urls"] = completed_urls
+            state["meta"]["total_segments"] = total_segments
+            state["meta"]["completed_segments"] = completed_segments
+            
+            # Check overall pipeline status
+            is_completed = (
+                state["steps"]["parsing"]["status"] == "done" and
+                state["steps"]["segmentation"]["status"] == "done" and
+                (not state["urls"] or all(u.get("crawl_status") == "done" and u.get("llm_status") == "done" for u in state["urls"].values())) and
+                (not state["segments"] or all(s.get("status") == "done" for s in state["segments"].values()))
+            )
+            state["meta"]["status"] = "completed" if is_completed else "in_progress"
+            
+            try:
+                # Ensure output directory exists
+                tasks_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(tasks_path, "w", encoding="utf-8") as sf:
+                    json.dump(state, sf, indent=2, ensure_ascii=False)
+            except Exception as e:
+                console.print(f"[bold red]State Save Error:[/bold red] {str(e)}")
+
     # 1. Phase 1: Parsing raw chat file
     parser = WhatsAppParser()
     console.print(f"📦 [bold yellow]Phase 1:[/bold yellow] Ingesting and parsing raw chat: {chat_path}...")
+    
+    if state["steps"]["parsing"]["status"] == "done":
+        console.print("✔️ Skip: Chat already parsed successfully in a previous run.")
+    else:
+        state["steps"]["parsing"]["status"] = "in_progress"
+        save_state()
+        try:
+            raw_messages = parser.parse_file(str(chat_path))
+            state["steps"]["parsing"]["status"] = "done"
+            state["steps"]["parsing"]["error"] = None
+            save_state()
+            console.print(f"✔️ Successfully parsed [bold green]{len(raw_messages)}[/bold green] raw message lines.")
+        except Exception as e:
+            state["steps"]["parsing"]["status"] = "error"
+            state["steps"]["parsing"]["error"] = str(e)
+            save_state()
+            console.print(f"❌ [bold red]Parsing Failed:[/bold red] {str(e)}")
+            sys.exit(1)
+
+    # Load messages for downstream pipeline
     try:
         raw_messages = parser.parse_file(str(chat_path))
-        console.print(f"✔️ Successfully parsed [bold green]{len(raw_messages)}[/bold green] raw message lines.")
     except Exception as e:
-        console.print(f"❌ [bold red]Parsing Failed:[/bold red] {str(e)}")
+        console.print(f"❌ [bold red]Fatal parsing exception during resume phase:[/bold red] {str(e)}")
         sys.exit(1)
 
     # 2. Phase 2: Chronological turn segmentation
     preprocessor = Preprocessor()
     console.print("🧹 [bold yellow]Phase 2:[/bold yellow] Running chronological turn segmentation...")
-    segments = preprocessor.segment_conversation(raw_messages)
-    console.print(f"✔️ Grouped conversation into [bold green]{len(segments)}[/bold green] conversational segments.")
+    
+    if state["steps"]["segmentation"]["status"] == "done":
+        console.print("✔️ Skip: Conversation already segmented successfully in a previous run.")
+        segments = preprocessor.segment_conversation(raw_messages)
+    else:
+        state["steps"]["segmentation"]["status"] = "in_progress"
+        save_state()
+        try:
+            segments = preprocessor.segment_conversation(raw_messages)
+            state["steps"]["segmentation"]["status"] = "done"
+            state["steps"]["segmentation"]["error"] = None
+            save_state()
+            console.print(f"✔️ Grouped conversation into [bold green]{len(segments)}[/bold green] conversational segments.")
+        except Exception as e:
+            state["steps"]["segmentation"]["status"] = "error"
+            state["steps"]["segmentation"]["error"] = str(e)
+            save_state()
+            console.print(f"❌ [bold red]Segmentation Failed:[/bold red] {str(e)}")
+            sys.exit(1)
 
-    # Initialize Phase 3, 4, and 5 clients
+    # Synchronize segments list into task tracking dictionary
+    for seg in segments:
+        if seg.segment_id not in state["segments"]:
+            state["segments"][seg.segment_id] = {
+                "segment_id": seg.segment_id,
+                "status": "pending",
+                "error": None,
+                "summary": "",
+                "tags": [],
+                "data": None
+            }
+    save_state()
+
+    # 3. Phase 3: Concurrent Link Crawling Queue (4 concurrent workers)
+    console.print("\n🕸️ [bold yellow]Phase 3:[/bold yellow] Scanning for links and initiating concurrent Web crawling...")
+    
+    unique_urls = {}
+    for seg in segments:
+        for msg in seg.messages:
+            if msg.media_type == "link" and msg.links:
+                for url in msg.links:
+                    if url not in unique_urls:
+                        unique_urls[url] = []
+                    unique_urls[url].append(msg)
+                    
+                    if url not in state["urls"]:
+                        state["urls"][url] = {
+                            "url": url,
+                            "crawl_status": "pending",
+                            "crawl_error": None,
+                            "title": "",
+                            "slug": "",
+                            "markdown_path": "",
+                            "llm_status": "pending",
+                            "llm_error": None,
+                            "executive_summary": "",
+                            "tags": [],
+                            "categories": []
+                        }
+    save_state()
+
+    console.print(f"✔️ Identified [bold green]{len(unique_urls)}[/bold green] unique URLs to crawl.")
+    
     scraper = ResilientCrawl4AIScraper()
     compiler = DocumentCompiler()
+    
+    scraped_pages_cache = {}
+    
+    # 3a. Prepopulate cache with already completed crawling URLs, loading from disk
+    for url, u_state in state["urls"].items():
+        if u_state["crawl_status"] == "done":
+            md_path = u_state["markdown_path"]
+            md_content = ""
+            if md_path and Path(md_path).exists():
+                try:
+                    with open(md_path, "r", encoding="utf-8") as f:
+                        md_content = f.read()
+                except Exception:
+                    pass
+            scraped_pages_cache[url] = {
+                "title": u_state["title"],
+                "slug": u_state["slug"],
+                "markdown_path": md_path,
+                "markdown": md_content
+            }
+
+    # 3b. Crawl pending and error URLs
+    urls_to_crawl = [url for url, u_state in state["urls"].items() if u_state["crawl_status"] != "done"]
+    
+    def crawl_url(url):
+        # 1. Scrape webpage asynchronously (network operation)
+        web_title, web_markdown, web_images = scraper.scrape_url(url)
+        
+        # 2. Compile clean file slug
+        slug = re.sub(r"https?://", "", url)
+        slug = re.sub(r"[^\w\-]", "_", slug)[:50]
+        
+        # 3. Generate locally cached images and clickable markdown
+        md_path = compiler.save_markdown_with_images(web_title, web_markdown, web_images, slug)
+        
+        # Update thread-safe state for crawled URL
+        with state_lock:
+            state["urls"][url]["title"] = web_title
+            state["urls"][url]["slug"] = slug
+            state["urls"][url]["markdown_path"] = md_path
+            state["urls"][url]["crawl_status"] = "done"
+            state["urls"][url]["crawl_error"] = None
+        save_state()
+        
+        return url, {
+            "title": web_title,
+            "slug": slug,
+            "markdown_path": md_path,
+            "markdown": web_markdown
+        }
+
+    if urls_to_crawl:
+        state["steps"]["scraping"]["status"] = "in_progress"
+        save_state()
+        
+        console.print(f"🕸️ Queuing [bold cyan]{len(urls_to_crawl)}[/bold cyan] URLs to crawl.")
+        
+        # Set all targets status to in_progress initially
+        for url in urls_to_crawl:
+            state["urls"][url]["crawl_status"] = "in_progress"
+        save_state()
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True
+        ) as progress:
+            task = progress.add_task("[cyan]Crawling websites (4 threads)...[/cyan]", total=len(urls_to_crawl))
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=config.max_scraper_workers) as executor:
+                futures = {executor.submit(crawl_url, url): url for url in urls_to_crawl}
+                for future in concurrent.futures.as_completed(futures):
+                    url = futures[future]
+                    try:
+                        url, result = future.result()
+                        scraped_pages_cache[url] = result
+                    except Exception as e:
+                        console.print(f"[bold red]Crawl Error for {url}:[/bold red] {str(e)}")
+                        error_slug = re.sub(r"[^\w\-]", "_", url)[:50]
+                        scraped_pages_cache[url] = {
+                            "title": "Untitled Page (Crawl Error)",
+                            "slug": error_slug,
+                            "markdown_path": "",
+                            "markdown": f"Crawl failed: {str(e)}"
+                        }
+                        with state_lock:
+                            state["urls"][url]["crawl_status"] = "error"
+                            state["urls"][url]["crawl_error"] = str(e)
+                            state["urls"][url]["title"] = "Untitled Page (Crawl Error)"
+                            state["urls"][url]["slug"] = error_slug
+                        save_state()
+                    progress.advance(task)
+                    
+        state["steps"]["scraping"]["status"] = "done"
+        state["steps"]["scraping"]["error"] = None
+        save_state()
+        console.print("[bold green]✔️ Phase 3 Complete! Scraping and local compilation finished.[/bold green]")
+    else:
+        state["steps"]["scraping"]["status"] = "done"
+        state["steps"]["scraping"]["error"] = None
+        save_state()
+        console.print("[bold green]✔️ Phase 3 Skip: All URLs already crawled in previous run.[/bold green]")
+        
+    # 4. Phase 4 & 5: Serial LLM Processing & Vector Database Indexing Queue (concurrency of 1)
+    console.print("\n🧠 [bold yellow]Phases 4-5:[/bold yellow] Running serial LLM summaries and ChromaDB vector indexing...")
+    
     llm_client = LMStudioHermesClient()
     vector_indexer = ChromaDBIndexer()
-
-    console.print("🧠 [bold yellow]Phases 3-5:[/bold yellow] Running concurrent pipeline (4 parallel agents) for link crawling & LLM inference...")
-
+    
+    # Try to recreate collection only if starting a reset fresh pipeline run
+    if reset:
+        try:
+            vector_indexer.client.delete_collection("whatsapp_chat")
+            console.print("[bold yellow]🧹 Reset database collection 'whatsapp_chat' successfully.[/bold yellow]")
+        except Exception:
+            pass
+    vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
+    
     enriched_segments = []
-
+    
+    state["steps"]["llm_enrichment"]["status"] = "in_progress"
+    save_state()
+    
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -166,31 +324,156 @@ def run_pipeline(chat_path: Path) -> None:
         MofNCompleteColumn(),
         transient=True
     ) as progress:
-        task_id = progress.add_task("[cyan]Processing turns concurrently...[/cyan]", total=len(segments))
-
-        # Use ThreadPoolExecutor with 4 concurrent agent workers
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            # Map futures to segments
-            futures = {
-                executor.submit(
-                    process_single_segment,
-                    seg,
-                    scraper,
-                    compiler,
-                    llm_client,
-                    vector_indexer,
-                    progress,
-                    task_id
-                ): seg for seg in segments
-            }
+        task = progress.add_task("[cyan]Processing and indexing turns (Serial LLM)...[/cyan]", total=len(segments))
+        
+        for seg in segments:
+            seg_state = state["segments"][seg.segment_id]
             
-            # Gather results as they complete
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    result = future.result()
-                    enriched_segments.append(result)
-                except Exception as e:
-                    console.print(f"[bold red]Thread Execution Error:[/bold red] {str(e)}")
+            # If segment is already completed, load enriched data from task cache directly
+            if seg_state["status"] == "done" and seg_state.get("data") is not None:
+                enriched_segments.append(seg_state["data"])
+                progress.advance(task)
+                continue
+                
+            seg_state["status"] = "in_progress"
+            save_state()
+            
+            try:
+                # 1. Process messages containing links serially
+                for msg in seg.messages:
+                    if msg.media_type == "link" and msg.links:
+                        for url in msg.links:
+                            cache = scraped_pages_cache.get(url)
+                            if not cache:
+                                continue
+                                
+                            web_title = cache["title"]
+                            web_markdown = cache["markdown"]
+                            web_slug = cache["slug"]
+                            web_md_path = cache["markdown_path"]
+                            
+                            u_state = state["urls"][url]
+                            
+                            # Webpage LLM summary enrichment caching
+                            if u_state["llm_status"] == "done":
+                                web_summary = u_state["executive_summary"]
+                                web_tags = u_state["tags"]
+                                web_categories = u_state["categories"]
+                            else:
+                                u_state["llm_status"] = "in_progress"
+                                save_state()
+                                
+                                try:
+                                    # Fetch webpage enrichment serially with 3x retry protection
+                                    web_enrichment = llm_client.enrich_webpage_content(web_markdown)
+                                    web_summary = web_enrichment.get("executive_summary", "")
+                                    web_tags = web_enrichment.get("tags", [])
+                                    web_categories = web_enrichment.get("categories", ["web"])
+                                    
+                                    u_state["executive_summary"] = web_summary
+                                    u_state["tags"] = web_tags
+                                    u_state["categories"] = web_categories
+                                    u_state["llm_status"] = "done"
+                                    u_state["llm_error"] = None
+                                    save_state()
+                                except Exception as e:
+                                    u_state["llm_status"] = "error"
+                                    u_state["llm_error"] = str(e)
+                                    save_state()
+                                    raise e
+                            
+                            metadata_obj = ScrapedURLMetadata(
+                                url=url,
+                                title=web_title,
+                                slug=web_slug,
+                                markdown_path=web_md_path,
+                                executive_summary=web_summary,
+                                tags=web_tags,
+                                categories=web_categories
+                            )
+                            msg.scraped_urls.append(metadata_obj)
+                            
+                            # Sync to message attributes
+                            msg.summary = web_summary
+                            msg.tags.extend(["scraped-web", web_slug])
+                            msg.tags.extend(web_tags)
+                            msg.tags.extend(web_categories)
+                
+                # 2. Segment-level conversation text compiled for LLM segment analysis
+                conversation_text = "\n".join([f"{msg.sender}: {msg.content}" for msg in seg.messages])
+                
+                # Call local Hermes LLM to generate summary and tags serially with 3x retry protection
+                enrichment = llm_client.enrich_message_segment(conversation_text)
+                seg.summary = enrichment.get("executive_summary", "")
+                seg.tags = enrichment.get("tags", [])
+                
+                # Compile crawled URL contexts for ChromaDB
+                crawled_url_contexts = []
+                all_web_tags = []
+                all_web_categories = []
+                for msg in seg.messages:
+                    for scraped in msg.scraped_urls:
+                        crawled_url_contexts.append(
+                            f"- Webpage: {scraped.title} ({scraped.url})\n"
+                            f"  Summary: {scraped.executive_summary}\n"
+                            f"  Categories: {', '.join(scraped.categories)}\n"
+                            f"  Tags: {', '.join(scraped.tags)}"
+                        )
+                        all_web_tags.extend(scraped.tags)
+                        all_web_categories.extend(scraped.categories)
+                        
+                crawled_section = ""
+                if crawled_url_contexts:
+                    crawled_section = "\nCrawled Webpages Context:\n" + "\n".join(crawled_url_contexts) + "\n"
+                    
+                # Prepare unified text context document block for Vector DB search
+                vector_document = (
+                    f"[Context Segment: {seg.segment_id} | Range: {seg.start_time} to {seg.end_time}]\n"
+                    f"[Summary: {seg.summary}]\n"
+                    f"[Tags: {', '.join(seg.tags)}]\n"
+                    f"{crawled_section}"
+                    f"Conversation log:\n{conversation_text}"
+                )
+                
+                # Define indexing metadata
+                vector_metadata = {
+                    "segment_id": seg.segment_id,
+                    "start_time": seg.start_time,
+                    "end_time": seg.end_time,
+                    "has_links": int(any(msg.media_type == "link" for msg in seg.messages)),
+                    "tags": ", ".join(list(set(seg.tags + all_web_tags))),
+                    "categories": ", ".join(list(set(all_web_categories)))
+                }
+                
+                # Idempotent Indexing document chunk into database using upsert!
+                vector_indexer.collection.upsert(
+                    documents=[vector_document],
+                    ids=[seg.segment_id],
+                    metadatas=[vector_metadata]
+                )
+                
+                # Update task state to done
+                seg_state["status"] = "done"
+                seg_state["summary"] = seg.summary
+                seg_state["tags"] = seg.tags
+                seg_state["error"] = None
+                seg_state["data"] = seg.model_dump(mode="json")
+                save_state()
+                
+            except Exception as e:
+                seg_state["status"] = "error"
+                seg_state["error"] = str(e)
+                save_state()
+                
+                seg.summary = f"Processing Failed. Error: {str(e)}"
+                seg.tags = ["error", "segment-failed"]
+                
+            enriched_segments.append(seg.model_dump(mode="json"))
+            progress.advance(task)
+            
+    state["steps"]["llm_enrichment"]["status"] = "done"
+    state["steps"]["llm_enrichment"]["error"] = None
+    save_state()
 
     # Sort enriched segments by segment_id sequence to maintain strict chronological order
     enriched_segments.sort(key=lambda x: int(x["segment_id"].split("-")[1]))
@@ -261,6 +544,11 @@ def main():
         default=str(config.chat_file_path),
         help="Custom path to raw WhatsApp chat export .txt file."
     )
+    run_parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset pipeline tasks state and rebuild database from scratch instead of resuming."
+    )
 
     # 2. search command
     search_parser = subparsers.add_parser("search", help="Query the local vector store database.")
@@ -282,7 +570,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "run":
-        run_pipeline(Path(args.file))
+        run_pipeline(Path(args.file), reset=args.reset)
     elif args.command == "search":
         query_database(args.query, has_links=args.has_links, limit=args.limit)
 
