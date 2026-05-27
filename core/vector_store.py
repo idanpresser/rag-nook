@@ -65,3 +65,68 @@ class ChromaDBIndexer:
             n_results=limit,
             where=where_filter
         )
+
+    def index_segment(
+        self,
+        segment_id: str,
+        document_text: str,
+        start_time: str,
+        end_time: str,
+        messages: List[Dict[str, Any]],
+        tags: List[str]
+    ) -> None:
+        """Serializes and indexes a conversation segment, compiling VLM/OCR text and contact info
+
+        directly into the searchable document content and indexing filterable metadata fields.
+        """
+        has_images = False
+        has_contacts = False
+        image_summaries = []
+        ocr_texts = []
+        contact_names = []
+
+        for msg in messages:
+            m_type = msg.get("media_type", "text")
+            attachments = msg.get("attachments", []) or []
+            
+            if m_type == "image" or any(att.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic')) for att in attachments):
+                has_images = True
+                if msg.get("summary"):
+                    image_summaries.append(msg["summary"])
+                content = msg.get("content", "")
+                if "[OCR Text extracted" in content:
+                    ocr_texts.append(content)
+                    
+            elif m_type == "document" or any(att.lower().endswith(".vcf") for att in attachments):
+                for att in attachments:
+                    if att.lower().endswith(".vcf"):
+                        has_contacts = True
+                        content = msg.get("content", "")
+                        if "Name:" in content:
+                            contact_names.append(content)
+
+        metadata = {
+            "segment_id": segment_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "has_links": int(any(msg.get("media_type") == "link" for msg in messages)),
+            "has_images": int(has_images),
+            "has_contacts": int(has_contacts),
+            "tags": ", ".join(tags)
+        }
+
+        # Build fully enriched document string to embed OCR & VLM
+        full_doc = document_text
+        if image_summaries:
+            full_doc += "\n[Image Summaries]: " + " | ".join(image_summaries)
+        if ocr_texts:
+            full_doc += "\n[Image OCR Texts]: " + " | ".join(ocr_texts)
+        if contact_names:
+            full_doc += "\n[Contact Cards]: " + " | ".join(contact_names)
+
+        self.collection.upsert(
+            documents=[full_doc],
+            ids=[segment_id],
+            metadatas=[metadata]
+        )
+
