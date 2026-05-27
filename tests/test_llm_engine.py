@@ -152,3 +152,39 @@ def test_synthesize_answer(mocker):
     assert answer == "Here is a RAG search response."
     mock_fallback.assert_called_once()
 
+
+def test_summarize_image_success(mocker, tmp_path):
+    img_path = tmp_path / "test_vlm.jpg"
+    img_path.write_bytes(b"dummy image bytes")
+
+    mock_choices = [
+        mocker.Mock(message=mocker.Mock(content="This image shows ענתי קרמון sitting at a clinic."))
+    ]
+    mock_response = mocker.Mock(choices=mock_choices)
+    mocker.patch("openai.resources.chat.completions.Completions.create", return_value=mock_response)
+
+    client = LMStudioHermesClient()
+    result = client.summarize_image(img_path, prompt="Describe this image")
+
+    assert result == "This image shows ענתי קרמון sitting at a clinic."
+
+
+def test_summarize_image_non_existent():
+    client = LMStudioHermesClient()
+    with pytest.raises(FileNotFoundError):
+        client.summarize_image("non_existent_vlm_img.avif")
+
+
+def test_summarize_image_error(mocker, tmp_path):
+    img_path = tmp_path / "error_vlm.jpg"
+    img_path.write_bytes(b"dummy")
+
+    mocker.patch("openai.resources.chat.completions.Completions.create", side_effect=Exception("API Timeout"))
+
+    client = LMStudioHermesClient()
+    result = client.summarize_image(img_path)
+
+    assert "failed" in result.lower()
+    assert "API Timeout" in result
+
+
