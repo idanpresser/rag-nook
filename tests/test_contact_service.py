@@ -64,3 +64,55 @@ def test_parse_non_existent_file():
     
     with pytest.raises(FileNotFoundError):
         parser.parse_file(non_existent)
+
+
+def test_contact_repository_crud_and_search(tmp_path):
+    from core.database import ContactRepository
+    db_file = tmp_path / "test_contacts.db"
+    repo = ContactRepository(db_path=db_file)
+    
+    # 1. Create parsed ContactMetadata
+    c1 = ContactMetadata(
+        full_name="Alice Smith",
+        phones=["123-456-7890", "987-654-3210"],
+        emails=["alice@example.com"],
+        org="Google"
+    )
+    c2 = ContactMetadata(
+        full_name="Bob Jones",
+        phones=["555-123-4567"],
+        emails=["bob@example.com"],
+        org="Apple"
+    )
+    
+    # 2. Insert into repository
+    repo.save(c1)
+    repo.save(c2)
+    
+    # 3. Search by name
+    results_name = repo.search_by_name("Alice")
+    assert len(results_name) == 1
+    assert results_name[0].full_name == "Alice Smith"
+    assert results_name[0].org == "Google"
+    
+    # 4. Search by phone
+    results_phone = repo.search_by_phone("555")
+    assert len(results_phone) == 1
+    assert results_phone[0].full_name == "Bob Jones"
+    
+    # 5. Handle duplicate contact conflicts cleanly (upsert by unique name)
+    c1_updated = ContactMetadata(
+        full_name="Alice Smith",
+        phones=["111-111-1111"],
+        emails=["alice_new@example.com"],
+        org="Google Inc"
+    )
+    repo.save(c1_updated)
+    
+    # Search again to verify upsert updated the contact instead of creating a duplicate
+    all_alice = repo.search_by_name("Alice Smith")
+    assert len(all_alice) == 1
+    assert all_alice[0].phones == ["111-111-1111"]
+    assert all_alice[0].emails == ["alice_new@example.com"]
+    assert all_alice[0].org == "Google Inc"
+
