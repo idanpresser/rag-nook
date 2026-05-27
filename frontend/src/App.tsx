@@ -136,6 +136,7 @@ export default function App() {
   const [focusedCategory, setFocusedCategory] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
   const [isGapOpen, setIsGapOpen] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<'overview' | 'ingestion' | 'settings'>('overview');
 
   // Premium Insights Reader States
   const [scrapedPageData, setScrapedPageData] = useState<any>(null);
@@ -1017,818 +1018,864 @@ export default function App() {
         {/* Right Sidebar Atlas Panel */}
         <aside className="sidebar-panel">
           
-          {/* LM Studio Model Manager Panel */}
-          <div className="sidebar-block" style={{ border: '1px solid rgba(99, 102, 241, 0.15)', background: 'rgba(99, 102, 241, 0.02)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Cpu size={16} style={{ color: 'var(--accent-indigo)' }} />
-                LM Studio Manager
-              </h4>
-              <button 
-                onClick={fetchLmsStatus} 
-                style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: '4px' }}
-                title="Refresh Status"
-              >
-                <RefreshCw size={12} className={actioningModel ? 'animate-spin' : ''} />
-              </button>
-            </div>
+          {/* Modern Glassmorphic Sidebar Tabs Switcher */}
+          <div className="sidebar-tabs">
+            <button 
+              type="button"
+              className={`sidebar-tab-btn ${sidebarTab === 'overview' ? 'active' : ''}`}
+              onClick={() => setSidebarTab('overview')}
+            >
+              <TrendingUp size={14} />
+              <span>Overview</span>
+            </button>
+            <button 
+              type="button"
+              className={`sidebar-tab-btn ${sidebarTab === 'ingestion' ? 'active' : ''}`}
+              onClick={() => setSidebarTab('ingestion')}
+            >
+              <Compass size={14} />
+              <span>Ingestion</span>
+              {/* Telemetry dot: glow green if pipeline is actively running */}
+              {pipelineStatus?.running && (
+                <span className="sidebar-tab-badge glow-green" />
+              )}
+            </button>
+            <button 
+              type="button"
+              className={`sidebar-tab-btn ${sidebarTab === 'settings' ? 'active' : ''}`}
+              onClick={() => setSidebarTab('settings')}
+            >
+              <Sliders size={14} />
+              <span>Settings</span>
+              {/* Telemetry dot: glow indigo if backend API is online */}
+              {apiOnline && (
+                <span className="sidebar-tab-badge glow-indigo" />
+              )}
+            </button>
+          </div>
 
-            {lmsStatus?.sdk_enabled ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {/* Active Model Status Badge */}
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '10px', borderRadius: '8px' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Loaded Model</span>
-                  {lmsStatus.loaded.length > 0 ? (
-                    lmsStatus.loaded.map((m: any) => (
-                      <div key={m.identifier} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '70%' }}>
-                          <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {m.identifier.split('/').pop()}
-                          </span>
-                          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.identifier}>
-                            {m.identifier}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => handleUnloadModel(m.identifier)}
-                          disabled={actioningModel !== null}
-                          className="ghost-btn"
-                          style={{ padding: '4px 8px', fontSize: '0.75rem', borderColor: '#ef4444', color: '#ef4444', background: 'rgba(239, 68, 68, 0.05)', whiteSpace: 'nowrap' }}
-                        >
-                          {actioningModel === m.identifier ? '...' : 'Unload'}
-                        </button>
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ marginTop: '6px', color: 'var(--text-secondary)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <AlertTriangle size={14} style={{ color: '#f59e0b' }} />
-                      No model loaded (SDK Fallback Active)
-                    </div>
-                  )}
-                </div>
-
-                {/* Downloaded Models List */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Available Downloaded Models</span>
-                  {lmsStatus.downloaded.filter((d: any) => d.type === 'llm').length > 0 ? (
-                    lmsStatus.downloaded.filter((d: any) => d.type === 'llm').map((d: any) => {
-                      const isLoaded = lmsStatus.loaded.some((m: any) => m.identifier === d.model_key);
+          {/* Tab Content Areas */}
+          {sidebarTab === 'overview' && (
+            <div className="sidebar-scroll-container">
+              {/* Bento Atlas Category Density Heatmap */}
+              <div className="sidebar-block">
+                <h4 className="sidebar-title">
+                  <TrendingUp size={16} style={{ color: 'var(--accent-cyan)' }} />
+                  Category Densities
+                </h4>
+                <div className="heatmap-list">
+                  {Object.entries(atlasData?.heatmap || MOCK_ATLAS.heatmap)
+                    .sort((a: any, b: any) => b[1] - a[1])
+                    .map(([name, count]: any) => {
+                      const color = CATEGORY_COLORS[name.toLowerCase()] || '#6366f1';
                       return (
                         <div 
-                          key={d.model_key} 
-                          style={{ 
-                            display: 'flex', 
-                            justifyContent: 'space-between', 
-                            alignItems: 'center', 
-                            padding: '8px 10px', 
-                            borderRadius: '8px', 
-                            background: isLoaded ? 'rgba(99, 102, 241, 0.05)' : 'rgba(255,255,255,0.01)',
-                            border: isLoaded ? '1px solid rgba(99, 102, 241, 0.1)' : '1px solid rgba(255,255,255,0.03)' 
-                          }}
+                          key={name} 
+                          className="heatmap-row"
+                          onClick={() => executeSearch(name)}
                         >
-                          <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '70%' }}>
-                            <span style={{ fontSize: '0.82rem', fontWeight: '500', color: isLoaded ? 'var(--accent-indigo)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {d.display_name}
-                            </span>
-                            <span style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.model_key}>
-                              {d.model_key}
-                            </span>
+                          <div className="heatmap-name-block">
+                            <div className="heatmap-color-dot" style={{ backgroundColor: color }} />
+                            <span style={{ fontSize: '0.88rem', textTransform: 'capitalize' }}>{name}</span>
                           </div>
-                          {!isLoaded ? (
-                            <button
-                              onClick={() => handleLoadModel(d.model_key)}
-                              disabled={actioningModel !== null}
-                              className="ghost-btn"
-                              style={{ padding: '4px 8px', fontSize: '0.75rem', borderColor: 'var(--accent-indigo)', color: 'var(--accent-indigo)', whiteSpace: 'nowrap' }}
-                            >
-                              {actioningModel === d.model_key ? '...' : 'Load'}
-                            </button>
-                          ) : (
-                            <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}>
-                              <CheckCircle size={10} /> Active
-                            </span>
-                          )}
+                          <span className="heatmap-count">{count} turns</span>
                         </div>
                       );
-                    })
-                  ) : (
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No downloaded LLM models found.</span>
-                  )}
+                    })}
                 </div>
               </div>
-            ) : (
-              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '10px', borderRadius: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                {lmsStatus?.status === 'disabled' ? (
-                  <div>
-                    <span style={{ fontWeight: '500', color: 'var(--text-primary)' }}>Standard Remote OpenAI/Ollama Mode</span>
-                    <p style={{ margin: '4px 0 0 0', fontSize: '0.75rem', color: 'var(--text-tertiary)', lineHeight: '1.4' }}>
-                      Programmatic model loading is inactive because endpoint is remote or SDK features are turned off.
-                    </p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f59e0b' }}>
-                    <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-                    <div>
-                      <strong style={{ display: 'block', fontSize: '0.8rem' }}>LM Studio Offline</strong>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Make sure the local server is running on port 1234.</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
 
+              {/* Interactive Gap Map canvas (2D t-SNE Clustering) */}
+              <KnowledgeGapMap 
+                atlasData={atlasData}
+                searchResults={searchResults}
+                mockSearchSources={MOCK_SEARCH.sources}
+                executeSearch={executeSearch}
+                handleSelectSource={handleSelectSource}
+                setIsGapOpen={setIsGapOpen}
+                addToast={addToast}
+              />
 
-            {/* Advanced Settings section inside LM Studio Manager */}
-            <div style={{ marginTop: '14px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', paddingTop: '12px' }}>
-              <button 
-                onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                style={{ 
-                  width: '100%', 
-                  background: 'none', 
-                  border: 'none', 
-                  color: 'var(--text-secondary)', 
-                  cursor: 'pointer', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'space-between',
-                  padding: '4px 0',
-                  fontSize: '0.8rem',
-                  fontWeight: '500'
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Sliders size={14} style={{ color: 'var(--accent-indigo)' }} />
-                  Advanced Settings
-                </span>
-                {showAdvancedSettings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </button>
-
-              {showAdvancedSettings && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px', background: 'rgba(0,0,0,0.1)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                  
-                  {/* Model Routing - ONLY show if SDK is enabled */}
-                  {lmsStatus?.sdk_enabled && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Model Routing</span>
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>ETL / Parser Model</label>
-                        <select 
-                          value={routingEtlModel}
-                          onChange={(e) => setRoutingEtlModel(e.target.value)}
-                          style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '5px', fontSize: '0.78rem' }}
-                        >
-                          <option value="">Select model...</option>
-                          {lmsStatus.downloaded.filter((d: any) => d.type === 'llm').map((d: any) => (
-                            <option key={d.model_key} value={d.model_key}>{d.display_name}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Search / RAG Model</label>
-                        <select 
-                          value={routingSearchModel}
-                          onChange={(e) => setRoutingSearchModel(e.target.value)}
-                          style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '5px', fontSize: '0.78rem' }}
-                        >
-                          <option value="">Select model...</option>
-                          {lmsStatus.downloaded.filter((d: any) => d.type === 'llm').map((d: any) => (
-                            <option key={d.model_key} value={d.model_key}>{d.display_name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Temperatures */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Temperatures</span>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-                        <label style={{ color: 'var(--text-secondary)' }}>ETL Segment</label>
-                        <span style={{ color: 'var(--accent-indigo)', fontWeight: 'bold' }}>{tempSegment.toFixed(2)}</span>
-                      </div>
-                      <input 
-                        type="range" min="0.0" max="1.0" step="0.05"
-                        value={tempSegment}
-                        onChange={(e) => setTempSegment(parseFloat(e.target.value))}
-                        style={{ width: '100%', accentColor: 'var(--accent-indigo)' }}
-                      />
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-                        <label style={{ color: 'var(--text-secondary)' }}>ETL Webpage</label>
-                        <span style={{ color: 'var(--accent-indigo)', fontWeight: 'bold' }}>{tempWebpage.toFixed(2)}</span>
-                      </div>
-                      <input 
-                        type="range" min="0.0" max="1.0" step="0.05"
-                        value={tempWebpage}
-                        onChange={(e) => setTempWebpage(parseFloat(e.target.value))}
-                        style={{ width: '100%', accentColor: 'var(--accent-indigo)' }}
-                      />
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-                        <label style={{ color: 'var(--text-secondary)' }}>Search / RAG Answer</label>
-                        <span style={{ color: 'var(--accent-indigo)', fontWeight: 'bold' }}>{tempSearch.toFixed(2)}</span>
-                      </div>
-                      <input 
-                        type="range" min="0.0" max="1.0" step="0.05"
-                        value={tempSearch}
-                        onChange={(e) => setTempSearch(parseFloat(e.target.value))}
-                        style={{ width: '100%', accentColor: 'var(--accent-indigo)' }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Max Tokens */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Max Output Tokens</label>
-                    <input 
-                      type="number" 
-                      value={maxTokens}
-                      onChange={(e) => setMaxTokens(parseInt(e.target.value) || 0)}
-                      style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '5px', fontSize: '0.78rem' }}
-                    />
-                  </div>
-
-                  {/* System Prompts */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Personas & Custom Prompts</span>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>ETL Extraction System Prompt</label>
-                      <textarea 
-                        rows={3}
-                        value={promptEtl}
-                        onChange={(e) => setPromptEtl(e.target.value)}
-                        style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '6px', fontSize: '0.75rem', fontFamily: 'monospace', resize: 'vertical' }}
-                      />
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>RAG Search Persona Prompt</label>
-                      <textarea 
-                        rows={3}
-                        value={promptSearch}
-                        onChange={(e) => setPromptSearch(e.target.value)}
-                        style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '6px', fontSize: '0.75rem', fontFamily: 'monospace', resize: 'vertical' }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Save Button */}
-                  <button
-                    onClick={handleSaveSettings}
-                    disabled={isSavingSettings}
-                    className="ghost-btn"
-                    style={{ 
-                      marginTop: '4px',
-                      padding: '8px', 
-                      fontSize: '0.8rem', 
-                      borderColor: 'var(--accent-indigo)', 
-                      color: 'var(--accent-indigo)', 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      gap: '6px',
-                      width: '100%',
-                      background: 'rgba(99,102,241,0.05)'
-                    }}
-                  >
-                    <Save size={12} />
-                    {isSavingSettings ? 'Saving...' : 'Save Configurations'}
-                  </button>
-
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Ingestion Pipeline Manager Panel */}
-          <div className="sidebar-block" style={{ border: '1px solid rgba(6, 182, 212, 0.15)', background: 'rgba(6, 182, 212, 0.02)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Compass size={16} style={{ color: 'var(--accent-cyan)' }} />
-                Pipeline Manager
-              </h4>
-              <button 
-                onClick={fetchPipelineStatus} 
-                style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: '4px' }}
-                title="Refresh Progress"
-              >
-                <RefreshCw size={12} className={pipelineStatus?.running ? 'animate-spin' : ''} />
-              </button>
-            </div>
-
-            {pipelineStatus ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                
-                {/* Overall status and glow indicator */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '8px 10px', borderRadius: '8px' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span 
-                      style={{ 
-                        width: '8px', 
-                        height: '8px', 
-                        borderRadius: '50%', 
-                        backgroundColor: pipelineStatus.running ? '#10b981' : '#f59e0b',
-                        boxShadow: pipelineStatus.running ? '0 0 8px #10b981' : 'none',
-                        display: 'inline-block' 
-                      }} 
-                    />
-                    Status: <strong style={{ textTransform: 'uppercase', fontSize: '0.72rem', color: pipelineStatus.running ? '#10b981' : 'var(--text-secondary)' }}>{pipelineStatus.status.replace('_', ' ')}</strong>
-                  </span>
-                  
-                  {pipelineStatus.running && (
-                    <span style={{ fontSize: '0.7rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <Loader2 size={10} className="animate-spin" /> Processing
-                    </span>
-                  )}
-                </div>
-
-                {/* Progress Checklist */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px 0' }}>
-                  
-                  {/* Step 1: Chat Log Parser */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>1. Chat Log Parser</span>
-                    <span 
-                      style={{ 
-                        fontSize: '0.68rem', 
-                        padding: '1px 6px', 
-                        borderRadius: '4px', 
-                        fontWeight: '600',
-                        background: pipelineStatus.steps.parsing.status === 'done' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255,255,255,0.04)',
-                        color: pipelineStatus.steps.parsing.status === 'done' ? '#10b981' : 'var(--text-tertiary)'
-                      }}
-                    >
-                      {pipelineStatus.steps.parsing.status}
-                    </span>
-                  </div>
-
-                  {/* Step 2: Turn Segmenter */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>2. Turn Segmenter</span>
-                    <span 
-                      style={{ 
-                        fontSize: '0.68rem', 
-                        padding: '1px 6px', 
-                        borderRadius: '4px', 
-                        fontWeight: '600',
-                        background: pipelineStatus.steps.segmentation.status === 'done' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255,255,255,0.04)',
-                        color: pipelineStatus.steps.segmentation.status === 'done' ? '#10b981' : 'var(--text-tertiary)'
-                      }}
-                    >
-                      {pipelineStatus.steps.segmentation.status}
-                    </span>
-                  </div>
-
-                  {/* Step 3: Link Scraper */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>3. Link Scraper</span>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
-                        {pipelineStatus.meta.completed_urls} / {pipelineStatus.meta.total_urls} URLs
-                      </span>
-                    </div>
-                    {/* Tiny Progress bar */}
-                    {pipelineStatus.meta.total_urls > 0 && (
-                      <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
-                        <div 
-                          style={{ 
-                            width: `${(pipelineStatus.meta.completed_urls / pipelineStatus.meta.total_urls) * 100}%`, 
-                            height: '100%', 
-                            background: 'var(--accent-cyan)', 
-                            transition: 'width 0.4s ease' 
-                          }} 
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Step 4: LLM Indexer */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>4. LLM Indexer</span>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
-                        {pipelineStatus.meta.completed_segments} / {pipelineStatus.meta.total_segments} turns
-                      </span>
-                    </div>
-                    {/* Tiny Progress bar */}
-                    {pipelineStatus.meta.total_segments > 0 && (
-                      <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
-                        <div 
-                          style={{ 
-                            width: `${(pipelineStatus.meta.completed_segments / pipelineStatus.meta.total_segments) * 100}%`, 
-                            height: '100%', 
-                            background: 'var(--accent-cyan)', 
-                            transition: 'width 0.4s ease' 
-                          }} 
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-
-                {/* Resume trigger button */}
-                {!pipelineStatus.running && (pipelineStatus.status !== 'completed') && (
-                  <button
-                    onClick={handleResumePipeline}
-                    disabled={isResuming}
-                    className="ghost-btn"
-                    style={{ 
-                      marginTop: '4px',
-                      padding: '8px', 
-                      fontSize: '0.8rem', 
-                      borderColor: 'var(--accent-cyan)', 
-                      color: 'var(--accent-cyan)', 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      gap: '6px',
-                      width: '100%',
-                      background: 'rgba(6, 182, 212, 0.05)'
-                    }}
-                  >
-                    <Play size={12} fill="currentColor" />
-                    {isResuming ? 'Resuming...' : 'Resume Ingestion'}
-                  </button>
-                )}
-
-              </div>
-            ) : (
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Loading pipeline status...</span>
-            )}
-          </div>
-
-
-          {/* Quick Ingest Panel */}
-          <div className="sidebar-block" style={{ border: '1px solid rgba(6, 182, 212, 0.15)', background: 'rgba(6, 182, 212, 0.02)' }}>
-            <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <Plus size={16} style={{ color: 'var(--accent-cyan)' }} />
-              Quick Ingestion
-            </h4>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              
-              {/* Message / Link input */}
-              <form onSubmit={handleIngestMessage} style={{ display: 'flex', gap: '6px' }}>
-                <input 
-                  type="text" 
-                  placeholder="Enter message or URL..." 
-                  value={singleIngestText}
-                  onChange={(e) => setSingleIngestText(e.target.value)}
-                  style={{ 
-                    flex: 1, 
-                    padding: '6px 10px', 
-                    fontSize: '0.8rem', 
-                    borderRadius: '6px', 
-                    border: '1px solid rgba(255,255,255,0.08)', 
-                    background: 'rgba(0,0,0,0.2)', 
-                    color: 'var(--text-primary)',
-                    outline: 'none'
-                  }}
-                  disabled={isIngestingMessage || isUploadingFile}
-                />
-                <button 
-                  type="submit" 
-                  disabled={isIngestingMessage || isUploadingFile || !singleIngestText.trim()}
-                  className="ghost-btn"
-                  style={{ 
-                    padding: '6px 10px', 
-                    fontSize: '0.8rem', 
-                    borderColor: 'var(--accent-cyan)', 
-                    color: 'var(--accent-cyan)',
-                    background: 'rgba(6, 182, 212, 0.05)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {isIngestingMessage ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <Send size={12} />
-                  )}
-                  Send
-                </button>
-              </form>
-
-              {/* Supplementary text file upload */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label 
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    gap: '8px', 
-                    padding: '8px 12px', 
-                    borderRadius: '6px', 
-                    border: '1px dashed rgba(255,255,255,0.15)', 
-                    background: 'rgba(0,0,0,0.15)', 
-                    color: 'var(--text-secondary)', 
-                    fontSize: '0.78rem',
-                    cursor: isUploadingFile || isIngestingMessage ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease',
-                    textAlign: 'center'
-                  }}
-                  className="file-upload-label"
-                >
-                  {isUploadingFile ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" style={{ color: 'var(--accent-cyan)' }} />
-                      <span>Merging & Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload size={14} style={{ color: 'var(--accent-cyan)' }} />
-                      <span>Merge Supplementary .txt File</span>
-                    </>
-                  )}
-                  <input 
-                    type="file" 
-                    accept=".txt"
-                    onChange={handleIngestFile}
-                    style={{ display: 'none' }}
-                    disabled={isUploadingFile || isIngestingMessage}
-                  />
-                </label>
-              </div>
-
-            </div>
-          </div>
-
-
-          {/* Database Snapshot Manager Panel */}
-          <div className="sidebar-block" style={{ border: '1px solid rgba(99, 102, 241, 0.15)', background: 'rgba(99, 102, 241, 0.02)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Database size={16} style={{ color: 'var(--accent-indigo)' }} />
-                Snapshot Manager
-              </h4>
-              <button 
-                onClick={fetchBackups} 
-                style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: '4px' }}
-                title="Refresh Snapshots"
-              >
-                <RefreshCw size={12} className={isCreatingBackup || isRestoringBackup ? 'animate-spin' : ''} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              
-              {/* Snapshot Creation Form */}
-              <form onSubmit={handleCreateBackup} style={{ display: 'flex', gap: '6px' }}>
-                <input 
-                  type="text" 
-                  placeholder="Snapshot label (e.g. backup)" 
-                  value={backupLabel}
-                  onChange={(e) => setBackupLabel(e.target.value)}
-                  style={{ 
-                    flex: 1, 
-                    padding: '6px 10px', 
-                    fontSize: '0.8rem', 
-                    borderRadius: '6px', 
-                    border: '1px solid rgba(255,255,255,0.08)', 
-                    background: 'rgba(0,0,0,0.2)', 
-                    color: 'var(--text-primary)',
-                    outline: 'none'
-                  }}
-                  disabled={isCreatingBackup}
-                />
-                <button 
-                  type="submit" 
-                  disabled={isCreatingBackup || isRestoringBackup}
-                  className="ghost-btn"
-                  style={{ 
-                    padding: '6px 10px', 
-                    fontSize: '0.8rem', 
-                    borderColor: 'var(--accent-indigo)', 
-                    color: 'var(--accent-indigo)',
-                    background: 'rgba(99, 102, 241, 0.05)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {isCreatingBackup ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <Plus size={12} />
-                  )}
-                  Snapshot
-                </button>
-              </form>
-
-              {/* Backups List */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '2px' }} className="custom-scrollbar">
-                {backups.length === 0 ? (
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontStyle: 'italic', textAlign: 'center', padding: '12px 0' }}>
-                    No database snapshots found.
-                  </span>
-                ) : (
-                  backups.map((backup) => (
+              {/* Quick gaps suggestions list */}
+              <div className="sidebar-block">
+                <h4 className="sidebar-title">
+                  <AlertTriangle size={16} style={{ color: '#ef4444' }} />
+                  Dangling Silence
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {atlasData?.gap_report?.gap_suggestions?.slice(0, 3).map((gap: any, index: number) => (
                     <div 
-                      key={backup.name}
+                      key={index}
+                      style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', padding: '10px', borderRadius: '8px', cursor: 'pointer' }}
+                      onClick={() => {
+                        setIngestCategory(gap.tag);
+                        setIsGapOpen(true);
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <span style={{ color: CATEGORY_COLORS[gap.tag.toLowerCase()] || '#6366f1', fontWeight: 'bold', fontSize: '0.82rem', textTransform: 'uppercase' }}>
+                          #{gap.tag}
+                        </span>
+                        <ChevronRight size={14} style={{ color: 'var(--text-tertiary)' }} />
+                      </div>
+                      <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.3' }}>
+                        {gap.suggestion}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {sidebarTab === 'ingestion' && (
+            <div className="sidebar-scroll-container">
+              {/* Ingestion Pipeline Manager Panel */}
+              <div className="sidebar-block" style={{ border: '1px solid rgba(6, 182, 212, 0.15)', background: 'rgba(6, 182, 212, 0.02)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Compass size={16} style={{ color: 'var(--accent-cyan)' }} />
+                    Pipeline Manager
+                  </h4>
+                  <button 
+                    onClick={fetchPipelineStatus} 
+                    style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: '4px' }}
+                    title="Refresh Progress"
+                  >
+                    <RefreshCw size={12} className={pipelineStatus?.running ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+
+                {pipelineStatus ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    
+                    {/* Overall status and glow indicator */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '8px 10px', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span 
+                          style={{ 
+                            width: '8px', 
+                            height: '8px', 
+                            borderRadius: '50%', 
+                            backgroundColor: pipelineStatus.running ? '#10b981' : '#f59e0b',
+                            boxShadow: pipelineStatus.running ? '0 0 8px #10b981' : 'none',
+                            display: 'inline-block' 
+                          }} 
+                        />
+                        Status: <strong style={{ textTransform: 'uppercase', fontSize: '0.72rem', color: pipelineStatus.running ? '#10b981' : 'var(--text-secondary)' }}>{pipelineStatus.status.replace('_', ' ')}</strong>
+                      </span>
+                      
+                      {pipelineStatus.running && (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Loader2 size={10} className="animate-spin" /> Processing
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Progress Checklist */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px 0' }}>
+                      
+                      {/* Step 1: Chat Log Parser */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>1. Chat Log Parser</span>
+                        <span 
+                          style={{ 
+                            fontSize: '0.68rem', 
+                            padding: '1px 6px', 
+                            borderRadius: '4px', 
+                            fontWeight: '600',
+                            background: pipelineStatus.steps.parsing.status === 'done' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255,255,255,0.04)',
+                            color: pipelineStatus.steps.parsing.status === 'done' ? '#10b981' : 'var(--text-tertiary)'
+                          }}
+                        >
+                          {pipelineStatus.steps.parsing.status}
+                        </span>
+                      </div>
+
+                      {/* Step 2: Turn Segmenter */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>2. Turn Segmenter</span>
+                        <span 
+                          style={{ 
+                            fontSize: '0.68rem', 
+                            padding: '1px 6px', 
+                            borderRadius: '4px', 
+                            fontWeight: '600',
+                            background: pipelineStatus.steps.segmentation.status === 'done' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255,255,255,0.04)',
+                            color: pipelineStatus.steps.segmentation.status === 'done' ? '#10b981' : 'var(--text-tertiary)'
+                          }}
+                        >
+                          {pipelineStatus.steps.segmentation.status}
+                        </span>
+                      </div>
+
+                      {/* Step 3: Link Scraper */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>3. Link Scraper</span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                            {pipelineStatus.meta.completed_urls} / {pipelineStatus.meta.total_urls} URLs
+                          </span>
+                        </div>
+                        {/* Tiny Progress bar */}
+                        {pipelineStatus.meta.total_urls > 0 && (
+                          <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+                            <div 
+                              style={{ 
+                                width: `${(pipelineStatus.meta.completed_urls / pipelineStatus.meta.total_urls) * 100}%`, 
+                                height: '100%', 
+                                background: 'var(--accent-cyan)', 
+                                transition: 'width 0.4s ease' 
+                              }} 
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Step 4: LLM Indexer */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>4. LLM Indexer</span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                            {pipelineStatus.meta.completed_segments} / {pipelineStatus.meta.total_segments} turns
+                          </span>
+                        </div>
+                        {/* Tiny Progress bar */}
+                        {pipelineStatus.meta.total_segments > 0 && (
+                          <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+                            <div 
+                              style={{ 
+                                width: `${(pipelineStatus.meta.completed_segments / pipelineStatus.meta.total_segments) * 100}%`, 
+                                height: '100%', 
+                                background: 'var(--accent-cyan)', 
+                                transition: 'width 0.4s ease' 
+                              }} 
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+
+                    {/* Resume trigger button */}
+                    {!pipelineStatus.running && (pipelineStatus.status !== 'completed') && (
+                      <button
+                        onClick={handleResumePipeline}
+                        disabled={isResuming}
+                        className="ghost-btn"
+                        style={{ 
+                          marginTop: '4px',
+                          padding: '8px', 
+                          fontSize: '0.8rem', 
+                          borderColor: 'var(--accent-cyan)', 
+                          color: 'var(--accent-cyan)', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          gap: '6px',
+                          width: '100%',
+                          background: 'rgba(6, 182, 212, 0.05)'
+                        }}
+                      >
+                        <Play size={12} fill="currentColor" />
+                        {isResuming ? 'Resuming...' : 'Resume Ingestion'}
+                      </button>
+                    )}
+
+                  </div>
+                ) : (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Loading pipeline status...</span>
+                )}
+              </div>
+
+              {/* Quick Ingest Panel */}
+              <div className="sidebar-block" style={{ border: '1px solid rgba(6, 182, 212, 0.15)', background: 'rgba(6, 182, 212, 0.02)' }}>
+                <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                  <Plus size={16} style={{ color: 'var(--accent-cyan)' }} />
+                  Quick Ingestion
+                </h4>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  
+                  {/* Message / Link input */}
+                  <form onSubmit={handleIngestMessage} style={{ display: 'flex', gap: '6px' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Enter message or URL..." 
+                      value={singleIngestText}
+                      onChange={(e) => setSingleIngestText(e.target.value)}
+                      style={{ 
+                        flex: 1, 
+                        padding: '6px 10px', 
+                        fontSize: '0.8rem', 
+                        borderRadius: '6px', 
+                        border: '1px solid rgba(255,255,255,0.08)', 
+                        background: 'rgba(0,0,0,0.2)', 
+                        color: 'var(--text-primary)',
+                        outline: 'none'
+                      }}
+                      disabled={isIngestingMessage || isUploadingFile}
+                    />
+                    <button 
+                      type="submit" 
+                      disabled={isIngestingMessage || isUploadingFile || !singleIngestText.trim()}
+                      className="ghost-btn"
+                      style={{ 
+                        padding: '6px 10px', 
+                        fontSize: '0.8rem', 
+                        borderColor: 'var(--accent-cyan)', 
+                        color: 'var(--accent-cyan)',
+                        background: 'rgba(6, 182, 212, 0.05)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {isIngestingMessage ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Send size={12} />
+                      )}
+                      Send
+                    </button>
+                  </form>
+
+                  {/* Supplementary text file upload */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label 
                       style={{ 
                         display: 'flex', 
-                        flexDirection: 'column', 
-                        gap: '4px', 
-                        padding: '8px 10px', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        gap: '8px', 
+                        padding: '8px 12px', 
                         borderRadius: '6px', 
-                        background: 'rgba(255,255,255,0.02)', 
-                        border: '1px solid rgba(255,255,255,0.04)',
-                        position: 'relative'
+                        border: '1px dashed rgba(255,255,255,0.15)', 
+                        background: 'rgba(0,0,0,0.15)', 
+                        color: 'var(--text-secondary)', 
+                        fontSize: '0.78rem',
+                        cursor: isUploadingFile || isIngestingMessage ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.2s ease',
+                        textAlign: 'center'
                       }}
+                      className="file-upload-label"
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-all', paddingRight: '48px' }}>
-                          {backup.label}
-                        </span>
+                      {isUploadingFile ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" style={{ color: 'var(--accent-cyan)' }} />
+                          <span>Merging & Processing...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={14} style={{ color: 'var(--accent-cyan)' }} />
+                          <span>Merge Supplementary .txt File</span>
+                        </>
+                      )}
+                      <input 
+                        type="file" 
+                        accept=".txt"
+                        onChange={handleIngestFile}
+                        style={{ display: 'none' }}
+                        disabled={isUploadingFile || isIngestingMessage}
+                      />
+                    </label>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          )}
+
+          {sidebarTab === 'settings' && (
+            <div className="sidebar-scroll-container">
+              {/* LM Studio Model Manager Panel */}
+              <div className="sidebar-block" style={{ border: '1px solid rgba(99, 102, 241, 0.15)', background: 'rgba(99, 102, 241, 0.02)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Cpu size={16} style={{ color: 'var(--accent-indigo)' }} />
+                    LM Studio Manager
+                  </h4>
+                  <button 
+                    onClick={fetchLmsStatus} 
+                    style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: '4px' }}
+                    title="Refresh Status"
+                  >
+                    <RefreshCw size={12} className={actioningModel ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+
+                {lmsStatus?.sdk_enabled ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {/* Active Model Status Badge */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '10px', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Loaded Model</span>
+                      {lmsStatus.loaded.length > 0 ? (
+                        lmsStatus.loaded.map((m: any) => (
+                          <div key={m.identifier} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '70%' }}>
+                              <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {m.identifier.split('/').pop()}
+                              </span>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.identifier}>
+                                {m.identifier}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => handleUnloadModel(m.identifier)}
+                              disabled={actioningModel !== null}
+                              className="ghost-btn"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem', borderColor: '#ef4444', color: '#ef4444', background: 'rgba(239, 68, 68, 0.05)', whiteSpace: 'nowrap' }}
+                            >
+                              {actioningModel === m.identifier ? '...' : 'Unload'}
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ marginTop: '6px', color: 'var(--text-secondary)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <AlertTriangle size={14} style={{ color: '#f59e0b' }} />
+                          No model loaded (SDK Fallback Active)
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Downloaded Models List */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Available Downloaded Models</span>
+                      {lmsStatus.downloaded.filter((d: any) => d.type === 'llm').length > 0 ? (
+                        lmsStatus.downloaded.filter((d: any) => d.type === 'llm').map((d: any) => {
+                          const isLoaded = lmsStatus.loaded.some((m: any) => m.identifier === d.model_key);
+                          return (
+                            <div 
+                              key={d.model_key} 
+                              style={{ 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center', 
+                                padding: '8px 10px', 
+                                borderRadius: '8px', 
+                                background: isLoaded ? 'rgba(99, 102, 241, 0.05)' : 'rgba(255,255,255,0.01)',
+                                border: isLoaded ? '1px solid rgba(99, 102, 241, 0.1)' : '1px solid rgba(255,255,255,0.03)' 
+                              }}
+                            >
+                              <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '70%' }}>
+                                <span style={{ fontSize: '0.82rem', fontWeight: '500', color: isLoaded ? 'var(--accent-indigo)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {d.display_name}
+                                </span>
+                                <span style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.model_key}>
+                                  {d.model_key}
+                                </span>
+                              </div>
+                              {!isLoaded ? (
+                                <button
+                                  onClick={() => handleLoadModel(d.model_key)}
+                                  disabled={actioningModel !== null}
+                                  className="ghost-btn"
+                                  style={{ padding: '4px 8px', fontSize: '0.75rem', borderColor: 'var(--accent-indigo)', color: 'var(--accent-indigo)', whiteSpace: 'nowrap' }}
+                                >
+                                  {actioningModel === d.model_key ? '...' : 'Load'}
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}>
+                                  <CheckCircle size={10} /> Active
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No downloaded LLM models found.</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '10px', borderRadius: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                    {lmsStatus?.status === 'disabled' ? (
+                      <div>
+                        <span style={{ fontWeight: '500', color: 'var(--text-primary)' }}>Standard Remote OpenAI/Ollama Mode</span>
+                        <p style={{ margin: '4px 0 0 0', fontSize: '0.75rem', color: 'var(--text-tertiary)', lineHeight: '1.4' }}>
+                          Programmatic model loading is inactive because endpoint is remote or SDK features are turned off.
+                        </p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f59e0b' }}>
+                        <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '0.8rem' }}>LM Studio Offline</strong>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Make sure the local server is running on port 1234.</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+
+                {/* Advanced Settings section inside LM Studio Manager */}
+                <div style={{ marginTop: '14px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', paddingTop: '12px' }}>
+                  <button 
+                    onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                    style={{ 
+                      width: '100%', 
+                      background: 'none', 
+                      border: 'none', 
+                      color: 'var(--text-secondary)', 
+                      cursor: 'pointer', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      padding: '4px 0',
+                      fontSize: '0.8rem',
+                      fontWeight: '500'
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Sliders size={14} style={{ color: 'var(--accent-indigo)' }} />
+                      Advanced Settings
+                    </span>
+                    {showAdvancedSettings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+
+                  {showAdvancedSettings && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px', background: 'rgba(0,0,0,0.1)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                      
+                      {/* Model Routing - ONLY show if SDK is enabled */}
+                      {lmsStatus?.sdk_enabled && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Model Routing</span>
+                          
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>ETL / Parser Model</label>
+                            <select 
+                              value={routingEtlModel}
+                              onChange={(e) => setRoutingEtlModel(e.target.value)}
+                              style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '5px', fontSize: '0.78rem' }}
+                            >
+                              <option value="">Select model...</option>
+                              {lmsStatus.downloaded.filter((d: any) => d.type === 'llm').map((d: any) => (
+                                <option key={d.model_key} value={d.model_key}>{d.display_name}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Search / RAG Model</label>
+                            <select 
+                              value={routingSearchModel}
+                              onChange={(e) => setRoutingSearchModel(e.target.value)}
+                              style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '5px', fontSize: '0.78rem' }}
+                            >
+                              <option value="">Select model...</option>
+                              {lmsStatus.downloaded.filter((d: any) => d.type === 'llm').map((d: any) => (
+                                <option key={d.model_key} value={d.model_key}>{d.display_name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Temperatures */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Temperatures</span>
                         
-                        <div style={{ display: 'flex', gap: '6px', position: 'absolute', right: '10px', top: '8px' }}>
-                          <button
-                            onClick={() => handleRestoreBackup(backup.name)}
-                            disabled={isRestoringBackup || isCreatingBackup}
-                            style={{ 
-                              background: 'none', 
-                              border: 'none', 
-                              color: 'rgba(16, 185, 129, 0.8)', 
-                              cursor: 'pointer', 
-                              padding: '2px', 
-                              display: 'flex',
-                              alignItems: 'center'
-                            }}
-                            title="Restore snapshot"
-                          >
-                            <Play size={12} fill="rgba(16, 185, 129, 0.4)" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteBackup(backup.name)}
-                            disabled={isRestoringBackup || isCreatingBackup}
-                            style={{ 
-                              background: 'none', 
-                              border: 'none', 
-                              color: 'rgba(239, 68, 68, 0.8)', 
-                              cursor: 'pointer', 
-                              padding: '2px', 
-                              display: 'flex',
-                              alignItems: 'center'
-                            }}
-                            title="Delete snapshot"
-                          >
-                            <Trash2 size={12} />
-                          </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                            <label style={{ color: 'var(--text-secondary)' }}>ETL Segment</label>
+                            <span style={{ color: 'var(--accent-indigo)', fontWeight: 'bold' }}>{tempSegment.toFixed(2)}</span>
+                          </div>
+                          <input 
+                            type="range" min="0.0" max="1.0" step="0.05"
+                            value={tempSegment}
+                            onChange={(e) => setTempSegment(parseFloat(e.target.value))}
+                            style={{ width: '100%', accentColor: 'var(--accent-indigo)' }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                            <label style={{ color: 'var(--text-secondary)' }}>ETL Webpage</label>
+                            <span style={{ color: 'var(--accent-indigo)', fontWeight: 'bold' }}>{tempWebpage.toFixed(2)}</span>
+                          </div>
+                          <input 
+                            type="range" min="0.0" max="1.0" step="0.05"
+                            value={tempWebpage}
+                            onChange={(e) => setTempWebpage(parseFloat(e.target.value))}
+                            style={{ width: '100%', accentColor: 'var(--accent-indigo)' }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                            <label style={{ color: 'var(--text-secondary)' }}>Search / RAG Answer</label>
+                            <span style={{ color: 'var(--accent-indigo)', fontWeight: 'bold' }}>{tempSearch.toFixed(2)}</span>
+                          </div>
+                          <input 
+                            type="range" min="0.0" max="1.0" step="0.05"
+                            value={tempSearch}
+                            onChange={(e) => setTempSearch(parseFloat(e.target.value))}
+                            style={{ width: '100%', accentColor: 'var(--accent-indigo)' }}
+                          />
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
-                        <span>{backup.created_at}</span>
-                        <span>{backup.size_str}</span>
+                      {/* Max Tokens */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Max Output Tokens</label>
+                        <input 
+                          type="number" 
+                          value={maxTokens}
+                          onChange={(e) => setMaxTokens(parseInt(e.target.value) || 0)}
+                          style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '5px', fontSize: '0.78rem' }}
+                        />
                       </div>
-                    </div>
-                  ))
-                )}
-              </div>
 
-              {/* Zipped Archive Backup/Restore Actions */}
-              <div style={{ display: 'flex', gap: '6px', marginTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px' }}>
-                <button
-                  onClick={handleExportArchive}
-                  disabled={isExportingArchive || isImportingArchive || isCreatingBackup || isRestoringBackup}
-                  className="ghost-btn"
-                  style={{ 
-                    flex: 1,
-                    padding: '6px 8px', 
-                    fontSize: '0.72rem', 
-                    borderColor: 'var(--accent-indigo)', 
-                    color: 'var(--accent-indigo)',
-                    background: 'rgba(99, 102, 241, 0.03)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '4px',
-                    cursor: 'pointer'
-                  }}
-                  title="Download unified zip backup archive"
-                >
-                  {isExportingArchive ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
-                  Backup Zip
-                </button>
+                      {/* System Prompts */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Personas & Custom Prompts</span>
+                        
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>ETL Extraction System Prompt</label>
+                          <textarea 
+                            rows={3}
+                            value={promptEtl}
+                            onChange={(e) => setPromptEtl(e.target.value)}
+                            style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '6px', fontSize: '0.75rem', fontFamily: 'monospace', resize: 'vertical' }}
+                          />
+                        </div>
 
-                <label 
-                  style={{ 
-                    flex: 1,
-                    padding: '6px 8px', 
-                    fontSize: '0.72rem', 
-                    borderColor: 'var(--accent-indigo)', 
-                    color: 'var(--accent-indigo)',
-                    border: '1px solid var(--accent-indigo)',
-                    borderRadius: '6px',
-                    background: 'rgba(99, 102, 241, 0.03)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '4px',
-                    cursor: isImportingArchive || isExportingArchive || isCreatingBackup || isRestoringBackup ? 'not-allowed' : 'pointer',
-                    opacity: isImportingArchive || isExportingArchive || isCreatingBackup || isRestoringBackup ? 0.5 : 1
-                  }}
-                  title="Restore from a unified zip backup archive"
-                >
-                  {isImportingArchive ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />}
-                  Restore Zip
-                  <input 
-                    type="file" 
-                    accept=".zip"
-                    onChange={handleImportArchive}
-                    style={{ display: 'none' }}
-                    disabled={isImportingArchive || isExportingArchive || isCreatingBackup || isRestoringBackup}
-                  />
-                </label>
-              </div>
-
-            </div>
-          </div>
-
-
-          {/* Bento Atlas Category Density Heatmap */}
-          <div className="sidebar-block">
-            <h4 className="sidebar-title">
-              <TrendingUp size={16} style={{ color: 'var(--accent-cyan)' }} />
-              Category Densities
-            </h4>
-            <div className="heatmap-list">
-              {Object.entries(atlasData?.heatmap || MOCK_ATLAS.heatmap)
-                .sort((a: any, b: any) => b[1] - a[1])
-                .map(([name, count]: any) => {
-                  const color = CATEGORY_COLORS[name.toLowerCase()] || '#6366f1';
-                  return (
-                    <div 
-                      key={name} 
-                      className="heatmap-row"
-                      onClick={() => executeSearch(name)}
-                    >
-                      <div className="heatmap-name-block">
-                        <div className="heatmap-color-dot" style={{ backgroundColor: color }} />
-                        <span style={{ fontSize: '0.88rem', textTransform: 'capitalize' }}>{name}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>RAG Search Persona Prompt</label>
+                          <textarea 
+                            rows={3}
+                            value={promptSearch}
+                            onChange={(e) => setPromptSearch(e.target.value)}
+                            style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '4px', padding: '6px', fontSize: '0.75rem', fontFamily: 'monospace', resize: 'vertical' }}
+                          />
+                        </div>
                       </div>
-                      <span className="heatmap-count">{count} turns</span>
+
+                      {/* Save Button */}
+                      <button
+                        onClick={handleSaveSettings}
+                        disabled={isSavingSettings}
+                        className="ghost-btn"
+                        style={{ 
+                          marginTop: '4px',
+                          padding: '8px', 
+                          fontSize: '0.8rem', 
+                          borderColor: 'var(--accent-indigo)', 
+                          color: 'var(--accent-indigo)', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          gap: '6px',
+                          width: '100%',
+                          background: 'rgba(99,102,241,0.05)'
+                        }}
+                      >
+                        <Save size={12} />
+                        {isSavingSettings ? 'Saving...' : 'Save Configurations'}
+                      </button>
+
                     </div>
-                  );
-                })}
-            </div>
-          </div>
-
-          {/* Interactive Gap Map canvas (2D t-SNE Clustering) */}
-          <KnowledgeGapMap 
-            atlasData={atlasData}
-            searchResults={searchResults}
-            mockSearchSources={MOCK_SEARCH.sources}
-            executeSearch={executeSearch}
-            handleSelectSource={handleSelectSource}
-            setIsGapOpen={setIsGapOpen}
-            addToast={addToast}
-          />
-
-          {/* Quick gaps suggestions list */}
-          <div className="sidebar-block">
-            <h4 className="sidebar-title">
-              <AlertTriangle size={16} style={{ color: '#ef4444' }} />
-              Dangling Silence
-            </h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {atlasData?.gap_report?.gap_suggestions?.slice(0, 3).map((gap: any, index: number) => (
-                <div 
-                  key={index}
-                  style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', padding: '10px', borderRadius: '8px', cursor: 'pointer' }}
-                  onClick={() => {
-                    setIngestCategory(gap.tag);
-                    setIsGapOpen(true);
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <span style={{ color: CATEGORY_COLORS[gap.tag.toLowerCase()] || '#6366f1', fontWeight: 'bold', fontSize: '0.82rem', textTransform: 'uppercase' }}>
-                      #{gap.tag}
-                    </span>
-                    <ChevronRight size={14} style={{ color: 'var(--text-tertiary)' }} />
-                  </div>
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.3' }}>
-                    {gap.suggestion}
-                  </p>
+                  )}
                 </div>
-              ))}
+              </div>
+
+              {/* Database Snapshot Manager Panel */}
+              <div className="sidebar-block" style={{ border: '1px solid rgba(99, 102, 241, 0.15)', background: 'rgba(99, 102, 241, 0.02)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h4 className="sidebar-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Database size={16} style={{ color: 'var(--accent-indigo)' }} />
+                    Snapshot Manager
+                  </h4>
+                  <button 
+                    onClick={fetchBackups} 
+                    style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: '4px' }}
+                    title="Refresh Snapshots"
+                  >
+                    <RefreshCw size={12} className={isCreatingBackup || isRestoringBackup ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  
+                  {/* Snapshot Creation Form */}
+                  <form onSubmit={handleCreateBackup} style={{ display: 'flex', gap: '6px' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Snapshot label (e.g. backup)" 
+                      value={backupLabel}
+                      onChange={(e) => setBackupLabel(e.target.value)}
+                      style={{ 
+                        flex: 1, 
+                        padding: '6px 10px', 
+                        fontSize: '0.8rem', 
+                        borderRadius: '6px', 
+                        border: '1px solid rgba(255,255,255,0.08)', 
+                        background: 'rgba(0,0,0,0.2)', 
+                        color: 'var(--text-primary)',
+                        outline: 'none'
+                      }}
+                      disabled={isCreatingBackup}
+                    />
+                    <button 
+                      type="submit" 
+                      disabled={isCreatingBackup || isRestoringBackup}
+                      className="ghost-btn"
+                      style={{ 
+                        padding: '6px 10px', 
+                        fontSize: '0.8rem', 
+                        borderColor: 'var(--accent-indigo)', 
+                        color: 'var(--accent-indigo)',
+                        background: 'rgba(99, 102, 241, 0.05)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {isCreatingBackup ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Plus size={12} />
+                      )}
+                      Snapshot
+                    </button>
+                  </form>
+
+                  {/* Backups List */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '2px' }} className="custom-scrollbar">
+                    {backups.length === 0 ? (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontStyle: 'italic', textAlign: 'center', padding: '12px 0' }}>
+                        No database snapshots found.
+                      </span>
+                    ) : (
+                      backups.map((backup) => (
+                        <div 
+                          key={backup.name}
+                          style={{ 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            gap: '4px', 
+                            padding: '8px 10px', 
+                            borderRadius: '6px', 
+                            background: 'rgba(255,255,255,0.02)', 
+                            border: '1px solid rgba(255,255,255,0.04)',
+                            position: 'relative'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-all', paddingRight: '48px' }}>
+                              {backup.label}
+                            </span>
+                            
+                            <div style={{ display: 'flex', gap: '6px', position: 'absolute', right: '10px', top: '8px' }}>
+                              <button
+                                onClick={() => handleRestoreBackup(backup.name)}
+                                disabled={isRestoringBackup || isCreatingBackup}
+                                style={{ 
+                                  background: 'none', 
+                                  border: 'none', 
+                                  color: 'rgba(16, 185, 129, 0.8)', 
+                                  cursor: 'pointer', 
+                                  padding: '2px', 
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                                title="Restore snapshot"
+                              >
+                                <Play size={12} fill="rgba(16, 185, 129, 0.4)" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteBackup(backup.name)}
+                                disabled={isRestoringBackup || isCreatingBackup}
+                                style={{ 
+                                  background: 'none', 
+                                  border: 'none', 
+                                  color: 'rgba(239, 68, 68, 0.8)', 
+                                  cursor: 'pointer', 
+                                  padding: '2px', 
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                                title="Delete snapshot"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
+                            <span>{backup.created_at}</span>
+                            <span>{backup.size_str}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Zipped Archive Backup/Restore Actions */}
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px' }}>
+                    <button
+                      onClick={handleExportArchive}
+                      disabled={isExportingArchive || isImportingArchive || isCreatingBackup || isRestoringBackup}
+                      className="ghost-btn"
+                      style={{ 
+                        flex: 1,
+                        padding: '6px 8px', 
+                        fontSize: '0.72rem', 
+                        borderColor: 'var(--accent-indigo)', 
+                        color: 'var(--accent-indigo)',
+                        background: 'rgba(99, 102, 241, 0.03)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        cursor: 'pointer'
+                      }}
+                      title="Download unified zip backup archive"
+                    >
+                      {isExportingArchive ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+                      Backup Zip
+                    </button>
+
+                    <label 
+                      style={{ 
+                        flex: 1,
+                        padding: '6px 8px', 
+                        fontSize: '0.72rem', 
+                        borderColor: 'var(--accent-indigo)', 
+                        color: 'var(--accent-indigo)',
+                        border: '1px solid var(--accent-indigo)',
+                        borderRadius: '6px',
+                        background: 'rgba(99, 102, 241, 0.03)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        cursor: isImportingArchive || isExportingArchive || isCreatingBackup || isRestoringBackup ? 'not-allowed' : 'pointer',
+                        opacity: isImportingArchive || isExportingArchive || isCreatingBackup || isRestoringBackup ? 0.5 : 1
+                      }}
+                      title="Restore from a unified zip backup archive"
+                    >
+                      {isImportingArchive ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />}
+                      Restore Zip
+                      <input 
+                        type="file" 
+                        accept=".zip"
+                        onChange={handleImportArchive}
+                        style={{ display: 'none' }}
+                        disabled={isImportingArchive || isExportingArchive || isCreatingBackup || isRestoringBackup}
+                      />
+                    </label>
+                  </div>
+
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
         </aside>
       </main>

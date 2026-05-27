@@ -875,3 +875,93 @@ code {
   color: var(--text-primary);
   max-width: 400px;
 }
+
+/* Glassmorphic Tabbed Control Center */
+.sidebar-tabs {
+  display: flex;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 4px;
+  gap: 4px;
+  backdrop-filter: blur(12px);
+  margin-bottom: 0.5rem;
+}
+
+.sidebar-tab-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  font-family: var(--heading);
+  font-weight: 500;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.sidebar-tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sidebar-tab-btn.active {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.sidebar-tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 2px;
+  background: var(--accent-gradient);
+  border-radius: 2px;
+}
+
+/* Micro Telemetry Indicators */
+.sidebar-tab-badge {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  position: absolute;
+  top: 6px;
+  right: 8px;
+}
+
+.sidebar-tab-badge.glow-green {
+  background-color: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.sidebar-tab-badge.glow-indigo {
+  background-color: var(--accent-indigo);
+  box-shadow: 0 0 6px var(--accent-indigo);
+}
+
+.sidebar-tab-badge.glow-cyan {
+  background-color: var(--accent-cyan);
+  box-shadow: 0 0 6px var(--accent-cyan);
+}
+
+/* Height-bounded scrolling container for Settings and Ingestion logs */
+.sidebar-scroll-container {
+  max-height: calc(100vh - 240px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-right: 4px;
+}
+
