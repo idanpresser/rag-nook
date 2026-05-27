@@ -95,3 +95,68 @@ def test_turn_segmentation():
     seg2 = segments[1]
     assert len(seg2.messages) == 1
     assert seg2.messages[0].content == "בגד ים"
+
+
+def test_enrich_conversation_with_attachments(tmp_path, mocker):
+    from core.preprocessor import ContactMetadata
+
+    # Create mock directory and mock attachment files
+    vcf_file = tmp_path / "EMobile.vcf"
+    vcf_file.touch()
+    img_file = tmp_path / "IMG-123.jpg"
+    img_file.touch()
+
+    raw_msgs = [
+        RawMessage(
+            date_str="3/1/24", time_str="06:56", sender="Idan P",
+            content="EMobile.vcf (file attached)", raw_text="3/1/24, 06:56 - Idan P: EMobile.vcf (file attached)"
+        ),
+        RawMessage(
+            date_str="3/1/24", time_str="06:57", sender="Idan P",
+            content="IMG-123.jpg (file attached)", raw_text="3/1/24, 06:57 - Idan P: IMG-123.jpg (file attached)"
+        )
+    ]
+
+    # Mock services
+    mock_optimizer = mocker.Mock()
+    mock_optimizer.optimize_image.return_value = tmp_path / "IMG-123.avif"
+    
+    mock_ocr = mocker.Mock()
+    mock_ocr.extract_text.return_value = "extracted recipe info"
+
+    mock_vcard = mocker.Mock()
+    mock_vcard.parse_file.return_value = ContactMetadata(
+        full_name="EMobile Clinic", phones=["048533420"], emails=[]
+    )
+
+    mock_repo = mocker.Mock()
+
+    mock_llm = mocker.Mock()
+    mock_llm.summarize_image.return_value = "a clinic sign with Hebrew text"
+
+    preprocessor = Preprocessor()
+    segments = preprocessor.enrich_conversation(
+        raw_msgs=raw_msgs,
+        directory_path=tmp_path,
+        media_optimizer=mock_optimizer,
+        ocr_processor=mock_ocr,
+        vcard_parser=mock_vcard,
+        contact_repo=mock_repo,
+        llm_client=mock_llm
+    )
+
+    assert len(segments) == 1
+    messages = segments[0].messages
+    assert len(messages) == 2
+
+    # Check vCard message
+    assert messages[0].attachments == ["EMobile.vcf"]
+    assert "EMobile Clinic" in messages[0].content
+    mock_repo.save.assert_called_once()
+
+    # Check image message
+    assert messages[1].attachments == ["IMG-123.jpg"]
+    assert "extracted recipe info" in messages[1].content
+    assert "a clinic sign with Hebrew text" in messages[1].summary
+    mock_optimizer.optimize_image.assert_called_once_with(img_file)
+

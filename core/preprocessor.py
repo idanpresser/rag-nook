@@ -163,3 +163,99 @@ class Preprocessor:
             end_time=messages[-1].datetime_utc,
             messages=messages
         )
+
+    def enrich_conversation(
+        self,
+        raw_msgs: List[RawMessage],
+        directory_path: Path,
+        media_optimizer,
+        ocr_processor,
+        vcard_parser,
+        contact_repo,
+        llm_client=None
+    ) -> List[ConversationSegment]:
+        """Aligns text logs with physical attachment files (images & contacts) in directory_path.
+
+        Optionally converts/optimizes pictures to AVIF, runs OCR + Gemma-4 local VLM summarization,
+        extracts contact profiles, and compiles them in a chronologically aligned turn stream.
+        """
+        enriched_msgs: List[EnrichedMessage] = []
+        for i, raw_msg in enumerate(raw_msgs):
+            enriched = self.enrich_message(raw_msg, f"msg-{i+1}")
+            
+            # Enrich active attachments
+            for attachment in enriched.attachments:
+                file_path = directory_path / attachment
+                if not file_path.exists():
+                    continue
+
+                suffix = file_path.suffix.lower()
+                if suffix in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"]:
+                    # Optimize image to AVIF format
+                    try:
+                        opt_path = media_optimizer.optimize_image(file_path)
+                    except Exception:
+                        opt_path = file_path
+
+                    # Run OCR
+                    try:
+                        ocr_text = ocr_processor.extract_text(file_path)
+                        if ocr_text:
+                            enriched.content += f"\n[OCR Text extracted from {attachment}]: {ocr_text}"
+                    except Exception:
+                        pass
+
+                    # Run local Gemma-4 VLM summarization
+                    if llm_client:
+                        try:
+                            vision_summary = llm_client.summarize_image(file_path, "Describe this image in detail.")
+                            if vision_summary:
+                                enriched.summary = vision_summary
+                        except Exception:
+                            pass
+
+                elif suffix == ".vcf":
+                    # Parse vCard profile
+                    try:
+                        contact = vcard_parser.parse_file(file_path)
+                        if contact:
+                            # Index structured contact card to SQLite repo
+                            contact_repo.save(contact)
+                            # Enrich turn text representation for vector db retrieval
+                            phones_str = ", ".join(contact.phones) if contact.phones else "None"
+                            emails_str = ", ".join(contact.emails) if contact.emails else "None"
+                            enriched.content += f"\n[Parsed Contact Card {attachment}]: Name: {contact.full_name}, Phones: {phones_str}, Emails: {emails_str}, Org: {contact.org or 'None'}"
+                    except Exception:
+                        pass
+
+            enriched_msgs.append(enriched)
+
+        if not enriched_msgs:
+            return []
+
+        segments: List[ConversationSegment] = []
+        current_msg_list: List[EnrichedMessage] = []
+
+        for enriched in enriched_msgs:
+            if not current_msg_list:
+                current_msg_list.append(enriched)
+                continue
+
+            last_msg = current_msg_list[-1]
+            last_dt = datetime.strptime(last_msg.datetime_utc, "%Y-%m-%dT%H:%M:%SZ")
+            curr_dt = datetime.strptime(enriched.datetime_utc, "%Y-%m-%dT%H:%M:%SZ")
+
+            # Check gap in seconds
+            gap = (curr_dt - last_dt).total_seconds()
+
+            if gap > config.max_segment_gap_seconds:
+                segments.append(self._create_segment(current_msg_list, f"seg-{len(segments)+1}"))
+                current_msg_list = [enriched]
+            else:
+                current_msg_list.append(enriched)
+
+        if current_msg_list:
+            segments.append(self._create_segment(current_msg_list, f"seg-{len(segments)+1}"))
+
+        return segments
+
