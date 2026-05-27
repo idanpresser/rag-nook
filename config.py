@@ -62,7 +62,7 @@ class AppConfig(BaseModel):
         r"https?://[^\s]+"
     )
     attachment_regex: re.Pattern = re.compile(
-        r"([\w\-]+\.\w+)\s*\(file attached\)"
+        r"([^\(:\n]+\.\w+)\s*\(file attached\)"
     )
     media_omitted_regex: re.Pattern = re.compile(
         r"^<Media omitted>$"

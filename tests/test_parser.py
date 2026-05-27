@@ -79,3 +79,19 @@ def test_parse_mixed_conversation(temp_workspace, mock_whatsapp_content):
     assert messages[5].content == "<Media omitted>"
     assert "תהיו Painkillers" in messages[6].content
     assert "https://www.linkedin.com/feed/" in messages[6].content
+
+def test_parse_message_with_attachment(temp_workspace):
+    chat_file = temp_workspace["chat_file"]
+    content = (
+        "3/1/24, 06:56 - Idan P: sample_image.jpg (file attached)\n"
+        "3/1/24, 06:57 - Idan P: sample_contact.vcf (file attached)\n"
+    )
+    chat_file.write_text(content, encoding="utf-8")
+    
+    parser = WhatsAppParser()
+    messages = parser.parse_file(str(chat_file))
+    
+    assert len(messages) == 2
+    assert messages[0].attachments == ["sample_image.jpg"]
+    assert messages[1].attachments == ["sample_contact.vcf"]
+

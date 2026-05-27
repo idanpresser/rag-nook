@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from config import config
 
 @dataclass
@@ -10,6 +10,7 @@ class RawMessage:
     sender: str
     content: str
     raw_text: str
+    attachments: List[str] = field(default_factory=list)
 
 class WhatsAppParser:
     """A streaming state-machine parser for WhatsApp chat logs.
@@ -41,6 +42,9 @@ class WhatsAppParser:
                 if header_match:
                     # Capture the completed previous message
                     if current_msg:
+                        current_msg.attachments = [
+                            att.strip() for att in config.attachment_regex.findall(current_msg.content)
+                        ]
                         messages.append(current_msg)
 
                     date_str, time_str, remainder = header_match.groups()
@@ -72,6 +76,10 @@ class WhatsAppParser:
 
             # Flush the final message
             if current_msg:
+                current_msg.attachments = [
+                    att.strip() for att in config.attachment_regex.findall(current_msg.content)
+                ]
                 messages.append(current_msg)
 
         return messages
+

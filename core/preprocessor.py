@@ -88,10 +88,7 @@ class Preprocessor:
         links = config.url_regex.findall(content)
         
         # 4. Extract attachment files
-        attachments = []
-        attachment_match = config.attachment_regex.search(content)
-        if attachment_match:
-            attachments.append(attachment_match.group(1))
+        attachments = [att.strip() for att in config.attachment_regex.findall(content)]
 
         # Classify media_type
         if links:
