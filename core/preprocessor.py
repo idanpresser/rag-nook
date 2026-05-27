@@ -13,6 +13,12 @@ class ScrapedURLMetadata(BaseModel):
     tags: List[str] = Field(default_factory=list)
     categories: List[str] = Field(default_factory=list)
 
+class ContactMetadata(BaseModel):
+    full_name: str
+    phones: List[str] = Field(default_factory=list)
+    emails: List[str] = Field(default_factory=list)
+    org: Optional[str] = None
+
 class EnrichedMessage(BaseModel):
     message_id: str
     datetime_utc: str
