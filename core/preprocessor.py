@@ -172,13 +172,20 @@ class Preprocessor:
         ocr_processor,
         vcard_parser,
         contact_repo,
-        llm_client=None
+        llm_client=None,
+        progress_callback=None
     ) -> List[ConversationSegment]:
         """Aligns text logs with physical attachment files (images & contacts) in directory_path.
 
         Optionally converts/optimizes pictures to AVIF, runs OCR + Gemma-4 local VLM summarization,
         extracts contact profiles, and compiles them in a chronologically aligned turn stream.
         """
+        # Pre-count total active attachments for robust progress metrics
+        total_attachments = sum(
+            1 for m in raw_msgs for att in m.attachments if (directory_path / att.strip()).exists()
+        )
+        processed_attachments = 0
+
         enriched_msgs: List[EnrichedMessage] = []
         for i, raw_msg in enumerate(raw_msgs):
             enriched = self.enrich_message(raw_msg, f"msg-{i+1}")
@@ -227,6 +234,14 @@ class Preprocessor:
                             enriched.content += f"\n[Parsed Contact Card {attachment}]: Name: {contact.full_name}, Phones: {phones_str}, Emails: {emails_str}, Org: {contact.org or 'None'}"
                     except Exception:
                         pass
+                
+                # Fire progress callback for each processed media/vcard attachment file
+                processed_attachments += 1
+                if progress_callback and total_attachments > 0:
+                    progress_callback(processed_attachments, total_attachments, attachment)
+
+            if progress_callback and total_attachments == 0 and i % 50 == 0:
+                progress_callback(i, len(raw_msgs), "text_message")
 
             enriched_msgs.append(enriched)
 

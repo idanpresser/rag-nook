@@ -17,6 +17,10 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
   const [showModal, setShowModal] = useState<boolean>(false);
   const [isChecking, setIsChecking] = useState<boolean>(false);
 
+  // Background progress polling states
+  const [isBackgroundProcessing, setIsBackgroundProcessing] = useState<boolean>(false);
+  const [ingestStep, setIngestStep] = useState<string>("");
+
   const handleSelectFolder = async () => {
     try {
       // Check browser support for directory picker
@@ -120,6 +124,50 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
     }
   };
 
+  const startPollingProgress = () => {
+    setIsBackgroundProcessing(true);
+    setIngestStep("Triggering background pipeline...");
+    setUploadProgress(0);
+
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/ingest/progress");
+        if (res.ok) {
+          const data = await res.json();
+          
+          setIngestStep(data.current_step || "Processing assets...");
+          setUploadProgress(data.progress || 0);
+
+          if (data.status === "success") {
+            clearInterval(intervalId);
+            setIsBackgroundProcessing(false);
+            setUploadProgress(100);
+            
+            addToast(
+              "Ingestion Successful", 
+              `Successfully processed folder contents and indexed segments in ChromaDB!`, 
+              "success"
+            );
+
+            // Reset states
+            setSelectedFolder(null);
+            setSelectedFiles([]);
+            setFilesCount({ txt: 0, media: 0, vcf: 0, total: 0 });
+            
+            // Refresh parent dashboard
+            onIngestionSuccess();
+          } else if (data.status === "failed") {
+            clearInterval(intervalId);
+            setIsBackgroundProcessing(false);
+            addToast("Ingestion Failed", data.error || "Ingestion task failed in background.", "error");
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to poll folder ingestion status:", err);
+      }
+    }, 1000);
+  };
+
   const handleUploadFolder = async () => {
     if (selectedFiles.length === 0 || filesCount.txt === 0) {
       addToast("Upload Blocked", "Please select a valid folder containing a WhatsApp chat log (.txt).", "error");
@@ -162,7 +210,7 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
         formData.append("files", file, file.name);
       });
 
-      setUploadProgress(40);
+      setUploadProgress(20);
 
       // Perform multipart post request passing the chosen transition mode query param
       const response = await fetch(`http://localhost:8000/api/ingest/folder?mode=${mode}`, {
@@ -170,42 +218,19 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
         body: formData
       });
 
-      setUploadProgress(80);
-
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || "Upload failed");
       }
 
       await response.json();
-      setUploadProgress(100);
+      setIsUploading(false); // Done with synchronous file transfer
       
-      let successMsg = "";
-      if (mode === "merge") {
-        successMsg = `Chronologically merged chat turns and index updated!`;
-      } else if (mode === "backup_discard") {
-        successMsg = `Database backed up snapshot, active DB wiped and fresh ingestion completed!`;
-      } else {
-        successMsg = `Database wiped and fresh chat log ingested!`;
-      }
-
-      addToast(
-        "Ingestion Successful", 
-        `Successfully ingested ${filesCount.total} files. ${successMsg}`, 
-        "success"
-      );
-
-      // Reset states
-      setSelectedFolder(null);
-      setSelectedFiles([]);
-      setFilesCount({ txt: 0, media: 0, vcf: 0, total: 0 });
-      
-      // Refresh parent dashboard
-      onIngestionSuccess();
+      // Trigger dynamic background polling
+      startPollingProgress();
 
     } catch (err: any) {
       addToast("Ingestion Failed", err.message || "Could not ingest folder contents.", "error");
-    } finally {
       setIsUploading(false);
       setUploadProgress(0);
     }
@@ -237,7 +262,7 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
                 setSelectedFiles([]);
                 setFilesCount({ txt: 0, media: 0, vcf: 0, total: 0 });
               }}
-              disabled={isUploading || isChecking}
+              disabled={isUploading || isChecking || isBackgroundProcessing}
               style={{ 
                 background: 'none', 
                 border: 'none', 
@@ -301,12 +326,37 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', color: 'var(--accent-cyan)' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <Loader2 size={12} className="animate-spin" /> Ingesting multi-modal assets...
+                    <Loader2 size={12} className="animate-spin" /> Uploading folder contents...
                   </span>
                   <span>{uploadProgress}%</span>
                 </div>
                 <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '20px', overflow: 'hidden' }}>
                   <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent-cyan)', transition: 'width 0.3s ease' }} />
+                </div>
+              </div>
+            ) : isBackgroundProcessing ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', color: 'var(--accent-cyan)' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+                    <Loader2 size={12} className="animate-spin" /> Ingesting assets: {uploadProgress}%
+                  </span>
+                </div>
+                <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '20px', overflow: 'hidden' }}>
+                  <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent-cyan)', transition: 'width 0.3s ease' }} />
+                </div>
+                <div 
+                  style={{ 
+                    fontSize: '0.68rem', 
+                    color: 'rgba(255,255,255,0.5)', 
+                    fontStyle: 'italic', 
+                    whiteSpace: 'nowrap', 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis',
+                    marginTop: '2px'
+                  }}
+                  title={ingestStep}
+                >
+                  ⚡ {ingestStep}
                 </div>
               </div>
             ) : isChecking ? (
@@ -604,4 +654,3 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
     </>
   );
 };
-

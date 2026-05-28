@@ -434,23 +434,31 @@ def check_existing_data():
     return {"has_existing_data": has_existing}
 
 
-@router.post("/api/ingest/folder")
-def ingest_folder(
-    background_tasks: BackgroundTasks, 
-    files: List[UploadFile] = File(...),
-    mode: str = "discard"  # "discard", "merge", or "backup_discard"
-):
-    """Accepts a multipart upload of files representing a selected WhatsApp export folder (chat log + attachments),
-    saves them in a secure temporary folder, runs scanner/parser workflows, optimizes assets, indexes them in SQLite/ChromaDB.
+# Global in-memory storage for tracking folder ingestion progress
+ingestion_progress = {
+    "status": "idle",
+    "progress": 0,
+    "current_step": "System idle",
+    "error": None
+}
 
-    Depending on the selected mode:
-    - discard: Wipes existing database and starts fresh
-    - merge: Merges the new chats chronologically with the old chats
-    - backup_discard: Backs up the old database and wipes it for a fresh start
+
+@router.get("/api/ingest/progress")
+def get_ingestion_progress():
+    """Retrieves real-time progress updates for the active background folder ingestion."""
+    return ingestion_progress
+
+
+def run_ingest_background_task(temp_dir_str: str, mode: str, has_existing_data: bool):
+    """Executes the intensive scanner, parser, optimizer, OCR, local VLM, and ChromaDB indexing
+    tasks asynchronously in the background, updating progress steps for the frontend to poll.
     """
+    global ingestion_progress
     import shutil
     import sqlite3
     import datetime
+    import json
+    from pathlib import Path
     from core.scanner import LocalFolderScanner
     from core.parser import WhatsAppParser
     from core.preprocessor import Preprocessor
@@ -460,76 +468,31 @@ def ingest_folder(
     from core.database import ContactRepository
     from core.llm_engine import LMStudioHermesClient
 
-    config.initialize_directories()
+    temp_dir = Path(temp_dir_str)
     
-    # 1. Determine if existing data is present
-    has_existing_data = config.chat_file_path.exists() and config.chat_file_path.stat().st_size > 0
-    
-    # Core tools
-    preprocessor = Preprocessor()
-    parser = WhatsAppParser()
-    vector_indexer = ChromaDBIndexer()
-    contact_repo = ContactRepository()
-
-    if has_existing_data:
-        if mode == "backup_discard":
-            # Backup the active database
-            try:
-                backup_service.create_backup("pre_ingest_auto_backup")
-            except Exception as backup_err:
-                print(f"[Backup Error] Auto backup failed: {str(backup_err)}")
-            # Discard
-            if config.chat_file_path.exists():
-                config.chat_file_path.unlink()
-            try:
-                vector_indexer.client.delete_collection("whatsapp_chat")
-            except Exception:
-                pass
-            vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
-            with sqlite3.connect(contact_repo.db_path) as conn:
-                conn.execute("DELETE FROM contacts")
-                conn.commit()
-        elif mode == "discard":
-            # Just discard
-            if config.chat_file_path.exists():
-                config.chat_file_path.unlink()
-            try:
-                vector_indexer.client.delete_collection("whatsapp_chat")
-            except Exception:
-                pass
-            vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
-            with sqlite3.connect(contact_repo.db_path) as conn:
-                conn.execute("DELETE FROM contacts")
-                conn.commit()
-        elif mode == "merge":
-            # Will perform the merge in the file processing block below
-            pass
-
-    # Setup temporary ingestion directory
-    temp_dir = config.output_dir / "temp" / "folder_ingest"
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
-    temp_dir.mkdir(parents=True, exist_ok=True)
-
-    saved_count = 0
     try:
-        # Save all files to temp directory
-        for file in files:
-            clean_filename = Path(file.filename).name
-            target_path = temp_dir / clean_filename
-            with open(target_path, "wb") as f:
-                shutil.copyfileobj(file.file, f)
-            saved_count += 1
+        # Core tools
+        preprocessor = Preprocessor()
+        parser = WhatsAppParser()
+        vector_indexer = ChromaDBIndexer()
+        contact_repo = ContactRepository()
 
-        # Scan folder using LocalFolderScanner
+        # 1. Scanning
+        ingestion_progress["current_step"] = "Scanning WhatsApp folder contents..."
+        ingestion_progress["progress"] = 5
+        
         scanner = LocalFolderScanner()
         scan_result = scanner.scan(temp_dir)
 
-        # Parse chat log
+        # 2. Parsing
+        ingestion_progress["current_step"] = "Parsing WhatsApp chat log..."
+        ingestion_progress["progress"] = 10
         raw_msgs = parser.parse_file(str(scan_result.chat_log_path))
 
-        # Handle chronological log merging if in merge mode
+        # 3. Merging (if merge mode)
         if has_existing_data and mode == "merge":
+            ingestion_progress["current_step"] = "Merging chronological chat turns with old chat logs..."
+            ingestion_progress["progress"] = 15
             old_raw_msgs = parser.parse_file(str(config.chat_file_path))
             combined_msgs = old_raw_msgs + raw_msgs
             
@@ -566,7 +529,7 @@ def ingest_folder(
             # If not merging, replace raw chat log completely
             shutil.copy2(scan_result.chat_log_path, config.chat_file_path)
 
-        # Core enrichment tools
+        # 4. Media Processing
         media_optimizer = MediaOptimizer()
         ocr_processor = OCRProcessor()
         vcard_parser = VCardParser()
@@ -576,6 +539,14 @@ def ingest_folder(
         if config.lms_sdk_enabled:
             llm_client = LMStudioHermesClient()
 
+        def progress_callback(processed, total, current_file):
+            pct = 20 + int((processed / total) * 60) # 20% to 80%
+            ingestion_progress["progress"] = pct
+            if current_file == "text_message":
+                ingestion_progress["current_step"] = f"Structuring chat text: message turn {processed} of {total}..."
+            else:
+                ingestion_progress["current_step"] = f"Processing attachment {processed} of {total}: {current_file}..."
+
         # Align, process and segment the conversation chronologically
         segments = preprocessor.enrich_conversation(
             raw_msgs=raw_msgs,
@@ -584,11 +555,17 @@ def ingest_folder(
             ocr_processor=ocr_processor,
             vcard_parser=vcard_parser,
             contact_repo=contact_repo,
-            llm_client=llm_client
+            llm_client=llm_client,
+            progress_callback=progress_callback
         )
 
-        # Index segments in ChromaDB vector database
-        for seg in segments:
+        # 5. ChromaDB vector database indexing
+        total_segments = len(segments)
+        for idx, seg in enumerate(segments):
+            pct = 80 + int((idx / total_segments) * 15) # 80% to 95%
+            ingestion_progress["progress"] = pct
+            ingestion_progress["current_step"] = f"Indexing structured segment {idx+1} of {total_segments} in ChromaDB..."
+            
             # Build text representation for vector indexing
             convo_lines = []
             for msg in seg.messages:
@@ -618,22 +595,136 @@ def ingest_folder(
         with open(parsed_chat_path, "w", encoding="utf-8") as f:
             json.dump(chat_data, f, indent=2, ensure_ascii=False)
 
-        return {
-            "status": "success",
-            "message": f"Successfully processed {saved_count} files from the selected folder.",
-            "scan_result": {
-                "chat_log": Path(scan_result.chat_log_path).name,
-                "media_count": len(scan_result.media_files),
-                "vcards_count": len(scan_result.vcard_files)
-            },
-            "segments_indexed": len(segments)
-        }
+        # 6. Completed
+        ingestion_progress["status"] = "success"
+        ingestion_progress["progress"] = 100
+        ingestion_progress["current_step"] = "Ingestion completed successfully!"
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Multimodal folder ingestion failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        ingestion_progress["status"] = "failed"
+        ingestion_progress["error"] = str(e)
+        ingestion_progress["current_step"] = f"Ingestion failed: {str(e)}"
     finally:
         # Clean up temporary upload files
         if temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+
+
+@router.post("/api/ingest/folder")
+def ingest_folder(
+    background_tasks: BackgroundTasks, 
+    files: List[UploadFile] = File(...),
+    mode: str = "discard"  # "discard", "merge", or "backup_discard"
+):
+    """Accepts a multipart upload of files representing a selected WhatsApp export folder (chat log + attachments),
+    saves them in a secure temporary folder, and triggers the scanner/parser/enrichment pipelines in the background.
+
+    Returns immediately with a 'processing' status to avoid client timeouts, allowing the frontend to poll progress.
+    """
+    import shutil
+    import sqlite3
+    from core.vector_store import ChromaDBIndexer
+    from core.database import ContactRepository
+
+    global ingestion_progress
+    if ingestion_progress["status"] == "processing":
+        raise HTTPException(status_code=400, detail="An ingestion pipeline is already running in the background.")
+
+    config.initialize_directories()
+    
+    # 1. Determine if existing data is present
+    has_existing_data = config.chat_file_path.exists() and config.chat_file_path.stat().st_size > 0
+    
+    # Core tools
+    vector_indexer = ChromaDBIndexer()
+    contact_repo = ContactRepository()
+
+    # Reset ingestion progress state
+    ingestion_progress = {
+        "status": "processing",
+        "progress": 0,
+        "current_step": "Initializing folders...",
+        "error": None
+    }
+
+    if has_existing_data:
+        if mode == "backup_discard":
+            # Backup the active database
+            try:
+                backup_service.create_backup("pre_ingest_auto_backup")
+            except Exception as backup_err:
+                print(f"[Backup Error] Auto backup failed: {str(backup_err)}")
+            # Discard
+            if config.chat_file_path.exists():
+                config.chat_file_path.unlink()
+            try:
+                vector_indexer.client.delete_collection("whatsapp_chat")
+            except Exception:
+                pass
+            vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
+            with sqlite3.connect(contact_repo.db_path) as conn:
+                conn.execute("DELETE FROM contacts")
+                conn.commit()
+        elif mode == "discard":
+            # Just discard
+            if config.chat_file_path.exists():
+                config.chat_file_path.unlink()
+            try:
+                vector_indexer.client.delete_collection("whatsapp_chat")
+            except Exception:
+                pass
+            vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
+            with sqlite3.connect(contact_repo.db_path) as conn:
+                conn.execute("DELETE FROM contacts")
+                conn.commit()
+        elif mode == "merge":
+            # Will perform the merge in the background task
+            pass
+
+    # Setup temporary ingestion directory
+    temp_dir = config.output_dir / "temp" / "folder_ingest"
+    if temp_dir.exists():
+        try:
             shutil.rmtree(temp_dir)
+        except Exception:
+            pass
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_count = 0
+    try:
+        # Save all files to temp directory synchronously so that streams are preserved
+        for file in files:
+            clean_filename = Path(file.filename).name
+            target_path = temp_dir / clean_filename
+            with open(target_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            saved_count += 1
+
+        # Fire background ingestion pipeline task
+        background_tasks.add_task(run_ingest_background_task, str(temp_dir), mode, has_existing_data)
+        
+        return {
+            "status": "processing",
+            "message": f"Successfully cached {saved_count} files. Ingestion triggered in the background."
+        }
+    except Exception as e:
+        ingestion_progress = {
+            "status": "failed",
+            "progress": 0,
+            "current_step": f"Initialization failed: {str(e)}",
+            "error": str(e)
+        }
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Multimodal folder ingestion initialization failed: {str(e)}")
 
 
 @router.get("/api/archive/export")

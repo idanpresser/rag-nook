@@ -361,8 +361,17 @@ def test_api_ingest_folder(client, mocker):
     response = client.post("/api/ingest/folder", files=files)
     assert response.status_code == 200
     json_data = response.json()
-    assert json_data["status"] == "success"
-    assert "processed 3 files" in json_data["message"]
+    assert json_data["status"] == "processing"
+    assert "triggered in the background" in json_data["message"]
+
+
+def test_api_ingest_progress(client, mocker):
+    response = client.get("/api/ingest/progress")
+    assert response.status_code == 200
+    json_data = response.json()
+    assert "status" in json_data
+    assert "progress" in json_data
+    assert "current_step" in json_data
 
 
 def test_api_serve_media_file(client, mocker):
