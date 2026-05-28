@@ -1,5 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+
+# Globally increase Starlette/FastAPI's multipart form field/file limits (default 1000)
+# to safely support WhatsApp export folder ingestion with thousands of files.
+original_form = Request.form
+async def patched_form(self, *, max_files=100000, max_fields=100000, max_part_size=104857600):  # 100k files/fields, 100MB part size
+    return await original_form(self, max_files=max_files, max_fields=max_fields, max_part_size=max_part_size)
+Request.form = patched_form
+
 from backend.routers import search, metadata, recovery
 
 app = FastAPI(
