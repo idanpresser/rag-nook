@@ -29,12 +29,42 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
       const dirHandle = await (window as any).showDirectoryPicker();
       setSelectedFolder(dirHandle.name);
       
+      // 2. Pass 1: Locate the primary chat log (.txt)
+      let chatLogFile: File | null = null;
+      for await (const entry of dirHandle.values()) {
+        if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.txt')) {
+          chatLogFile = await entry.getFile();
+          break;
+        }
+      }
+
+      if (!chatLogFile) {
+        addToast(
+          "No Chat Log Found", 
+          "The folder must contain at least one plain WhatsApp export text file (.txt).", 
+          "error"
+        );
+        setSelectedFolder(null);
+        return;
+      }
+
+      // Read chat log text locally and extract referenced images
+      const chatText = await chatLogFile.text();
+      const referencedImages = new Set<string>();
+      
+      // Matches standard and Hebrew/special character filenames with extensions inside (file attached)
+      const attachmentRegex = /([^\(\:\n\r]+\.(?:jpg|jpeg|png|webp|heic))\s*\(file attached\)/gi;
+      let match;
+      while ((match = attachmentRegex.exec(chatText)) !== null) {
+        referencedImages.add(match[1].trim().toLowerCase());
+      }
+
       const fileList: File[] = [];
       let txtCount = 0;
       let mediaCount = 0;
       let vcfCount = 0;
 
-      // 2. Iterate files in directory recursively or locally
+      // 3. Pass 2: Filter and collect only the relevant files
       for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file') {
           const file = await entry.getFile();
@@ -46,9 +76,12 @@ export const FolderSelector: React.FC<FolderSelectorProps> = ({ onIngestionSucce
           } else if (name.endsWith('.vcf')) {
             vcfCount++;
             fileList.push(file);
-          } else if (/\.(jpg|jpeg|png|gif|webp|heic|mp4|mov|avi|mp3|wav|opus|pdf)$/.test(name)) {
-            mediaCount++;
-            fileList.push(file);
+          } else if (/\.(jpg|jpeg|png|webp|heic)$/.test(name)) {
+            // Upload only if the image is actually attached/referenced in the chat log!
+            if (referencedImages.has(file.name.toLowerCase())) {
+              mediaCount++;
+              fileList.push(file);
+            }
           }
         }
       }
