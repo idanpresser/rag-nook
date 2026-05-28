@@ -623,3 +623,28 @@ def import_archive_endpoint(file: UploadFile = File(...)):
                 pass
 
 
+@router.get("/api/media/{filename}")
+def serve_media_file(filename: str):
+    """Serves optimized media files (such as AVIF images) from the local storage cache."""
+    optimized_dir = config.output_dir / "optimized_media"
+    file_path = optimized_dir / filename
+    
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Media file not found.")
+        
+    suffix = file_path.suffix.lower()
+    if suffix == ".avif":
+        media_type = "image/avif"
+    elif suffix == ".webp":
+        media_type = "image/webp"
+    elif suffix == ".png":
+        media_type = "image/png"
+    elif suffix == ".jpg" or suffix == ".jpeg":
+        media_type = "image/jpeg"
+    else:
+        media_type = "application/octet-stream"
+        
+    return FileResponse(path=str(file_path), media_type=media_type)
+
+
+

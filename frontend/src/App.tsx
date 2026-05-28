@@ -10,6 +10,7 @@ import { CATEGORY_COLORS } from './constants/colors';
 import { KnowledgeGapMap } from './components/KnowledgeGapMap';
 import { BridgeGapDrawer } from './components/BridgeGapDrawer';
 import { InsightsConsoleModal } from './components/InsightsConsoleModal';
+import { FolderSelector } from './components/FolderSelector';
 
 // API Configuration
 const API_BASE = 'http://localhost:8000';
@@ -1382,6 +1383,16 @@ export default function App() {
                       />
                     </label>
                   </div>
+
+                  {/* Multimodal Folder Ingestion Selector */}
+                  <FolderSelector 
+                    onIngestionSuccess={() => {
+                      fetchAtlasData();
+                      fetchPipelineStatus();
+                      handleSearch(new Event('submit') as any);
+                    }} 
+                    addToast={(title, msg, type) => addToast(title, msg)} 
+                  />
 
                 </div>
               </div>

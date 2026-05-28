@@ -351,6 +351,21 @@ def test_api_ingest_folder(client, mocker):
     assert "processed 3 files" in json_data["message"]
 
 
+def test_api_serve_media_file(client, mocker):
+    mocker.patch("config.AppConfig.initialize_directories")
+    mocker.patch("pathlib.Path.exists", return_value=True)
+    mocker.patch("pathlib.Path.is_file", return_value=True)
+    
+    from fastapi.responses import Response
+    mocker.patch("backend.routers.metadata.FileResponse", return_value=Response(content=b"image bytes", media_type="image/avif"))
+    
+    response = client.get("/api/media/photo.avif")
+    assert response.status_code == 200
+    assert response.content == b"image bytes"
+    assert response.headers["content-type"] == "image/avif"
+
+
+
 
 
 
