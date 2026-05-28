@@ -323,5 +323,35 @@ def test_api_archive_import(client, mocker):
     mock_import.assert_called_once()
 
 
+def test_api_ingest_folder(client, mocker):
+    from pathlib import Path
+    mocker.patch("config.AppConfig.initialize_directories")
+    mocker.patch("builtins.open", mocker.mock_open())
+    
+    mock_scan_result = mocker.Mock()
+    mock_scan_result.chat_log_path = Path("WhatsApp Chat with ענתי.txt")
+    mock_scan_result.media_files = [Path("photo.jpg")]
+    mock_scan_result.vcard_files = [Path("contact.vcf")]
+    mocker.patch("core.scanner.LocalFolderScanner.scan", return_value=mock_scan_result)
+
+    mocker.patch("core.parser.WhatsAppParser.parse_file", return_value=[])
+    mocker.patch("core.preprocessor.Preprocessor.enrich_conversation", return_value=[])
+
+    from io import BytesIO
+    files = [
+        ("files", ("WhatsApp Chat with ענתי.txt", BytesIO(b"chat data"), "text/plain")),
+        ("files", ("photo.jpg", BytesIO(b"image data"), "image/jpeg")),
+        ("files", ("contact.vcf", BytesIO(b"vcard data"), "text/vcard")),
+    ]
+
+    response = client.post("/api/ingest/folder", files=files)
+    assert response.status_code == 200
+    json_data = response.json()
+    assert json_data["status"] == "success"
+    assert "processed 3 files" in json_data["message"]
+
+
+
+
 
 

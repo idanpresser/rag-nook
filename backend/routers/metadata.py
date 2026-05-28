@@ -3,6 +3,7 @@ import threading
 import datetime
 import uuid
 from pathlib import Path
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -426,6 +427,120 @@ def ingest_text_file(background_tasks: BackgroundTasks, file: UploadFile = File(
         raise HTTPException(status_code=400, detail="Failed to decode file as UTF-8 text.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file upload: {str(e)}")
+
+
+@router.post("/api/ingest/folder")
+def ingest_folder(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
+    """Accepts a multipart upload of files representing a selected WhatsApp export folder (chat log + attachments),
+    saves them in a secure temporary folder, runs scanner/parser workflows, optimizes assets, indexes them in SQLite/ChromaDB.
+    """
+    import shutil
+    from core.scanner import LocalFolderScanner
+    from core.parser import WhatsAppParser
+    from core.preprocessor import Preprocessor
+    from core.media import MediaOptimizer
+    from services.media_service import OCRProcessor
+    from services.contact_service import VCardParser
+    from core.database import ContactRepository
+    from core.llm_engine import LMStudioHermesClient
+
+    config.initialize_directories()
+    
+    # Setup temporary ingestion directory
+    temp_dir = config.output_dir / "temp" / "folder_ingest"
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_count = 0
+    try:
+        # Save all files to temp directory
+        for file in files:
+            clean_filename = Path(file.filename).name
+            target_path = temp_dir / clean_filename
+            with open(target_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            saved_count += 1
+
+        # Scan folder using LocalFolderScanner
+        scanner = LocalFolderScanner()
+        scan_result = scanner.scan(temp_dir)
+
+        # Parse chat log
+        parser = WhatsAppParser()
+        raw_msgs = parser.parse_file(str(scan_result.chat_log_path))
+
+        # Core enrichment tools
+        media_optimizer = MediaOptimizer()
+        ocr_processor = OCRProcessor()
+        vcard_parser = VCardParser()
+        contact_repo = ContactRepository()
+        
+        # Instantiate LLM client if SDK is enabled, otherwise mock/None
+        llm_client = None
+        if config.lms_sdk_enabled:
+            llm_client = LMStudioHermesClient()
+
+        # Align, process and segment the conversation chronologically
+        preprocessor = Preprocessor()
+        segments = preprocessor.enrich_conversation(
+            raw_msgs=raw_msgs,
+            directory_path=temp_dir,
+            media_optimizer=media_optimizer,
+            ocr_processor=ocr_processor,
+            vcard_parser=vcard_parser,
+            contact_repo=contact_repo,
+            llm_client=llm_client
+        )
+
+        # Index segments in ChromaDB vector database
+        vector_indexer = ChromaDBIndexer()
+        for seg in segments:
+            # Build text representation for vector indexing
+            convo_lines = []
+            for msg in seg.messages:
+                convo_lines.append(f"[{msg.sender}]: {msg.content}")
+            conversation_text = "\n".join(convo_lines)
+            
+            document_text = (
+                f"[Context Segment: {seg.segment_id} | Range: {seg.start_time} to {seg.end_time}]\n"
+                f"[Summary: {seg.summary or 'None'}]\n"
+                f"[Tags: {', '.join(seg.tags)}]\n"
+                f"Conversation log:\n{conversation_text}"
+            )
+            
+            # Index segment in ChromaDB
+            vector_indexer.index_segment(
+                segment_id=seg.segment_id,
+                document_text=document_text,
+                start_time=seg.start_time,
+                end_time=seg.end_time,
+                messages=[msg.model_dump() for msg in seg.messages],
+                tags=seg.tags
+            )
+
+        # Also save the parsed chat segment sequence database to parsed_chat.json
+        parsed_chat_path = config.output_dir / "parsed_chat.json"
+        chat_data = [seg.model_dump() for seg in segments]
+        with open(parsed_chat_path, "w", encoding="utf-8") as f:
+            json.dump(chat_data, f, indent=2, ensure_ascii=False)
+
+        return {
+            "status": "success",
+            "message": f"Successfully processed {saved_count} files from the selected folder.",
+            "scan_result": {
+                "chat_log": Path(scan_result.chat_log_path).name,
+                "media_count": len(scan_result.media_files),
+                "vcards_count": len(scan_result.vcard_files)
+            },
+            "segments_indexed": len(segments)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Multimodal folder ingestion failed: {str(e)}")
+    finally:
+        # Clean up temporary upload files
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
 
 
 @router.get("/api/archive/export")
