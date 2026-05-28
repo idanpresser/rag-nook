@@ -188,6 +188,7 @@ def test_api_pipeline_status_idle(client, mocker):
 
 def test_api_pipeline_resume_success(client, mocker):
     mocker.patch("backend.routers.metadata.pipeline_running", False)
+    mocker.patch("backend.routers.metadata.run_pipeline_task")
     
     response = client.post("/api/pipeline/resume")
     assert response.status_code == 200
@@ -328,6 +329,19 @@ def test_api_ingest_folder(client, mocker):
     mocker.patch("config.AppConfig.initialize_directories")
     mocker.patch("builtins.open", mocker.mock_open())
     
+    # Safely mock config.chat_file_path to prevent real file deletion or existence checks
+    mock_chat_path = mocker.MagicMock(spec=Path)
+    mock_chat_path.exists.return_value = False
+    mocker.patch("backend.routers.metadata.config.chat_file_path", mock_chat_path)
+
+    # Mock database indexers, repositories and services
+    mock_indexer = mocker.MagicMock()
+    mocker.patch("core.vector_store.ChromaDBIndexer", return_value=mock_indexer)
+    mock_contact_repo = mocker.MagicMock()
+    mocker.patch("core.database.ContactRepository", return_value=mock_contact_repo)
+    mocker.patch("backend.routers.metadata.backup_service")
+    mocker.patch("shutil.copy2")
+    
     mock_scan_result = mocker.Mock()
     mock_scan_result.chat_log_path = Path("WhatsApp Chat with ענתי.txt")
     mock_scan_result.media_files = [Path("photo.jpg")]
@@ -363,6 +377,31 @@ def test_api_serve_media_file(client, mocker):
     assert response.status_code == 200
     assert response.content == b"image bytes"
     assert response.headers["content-type"] == "image/avif"
+
+
+def test_api_ingest_check_exists(client, mocker):
+    from pathlib import Path
+    mock_chat_path = mocker.MagicMock(spec=Path)
+    mock_chat_path.exists.return_value = True
+    mock_chat_path.stat.return_value.st_size = 100
+    mocker.patch("backend.routers.metadata.config.chat_file_path", mock_chat_path)
+    
+    response = client.get("/api/ingest/check")
+    assert response.status_code == 200
+    json_data = response.json()
+    assert json_data["has_existing_data"] is True
+
+
+def test_api_ingest_check_empty(client, mocker):
+    from pathlib import Path
+    mock_chat_path = mocker.MagicMock(spec=Path)
+    mock_chat_path.exists.return_value = False
+    mocker.patch("backend.routers.metadata.config.chat_file_path", mock_chat_path)
+    
+    response = client.get("/api/ingest/check")
+    assert response.status_code == 200
+    json_data = response.json()
+    assert json_data["has_existing_data"] is False
 
 
 

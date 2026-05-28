@@ -427,14 +427,30 @@ def ingest_text_file(background_tasks: BackgroundTasks, file: UploadFile = File(
         raise HTTPException(status_code=400, detail="Failed to decode file as UTF-8 text.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file upload: {str(e)}")
+@router.get("/api/ingest/check")
+def check_existing_data():
+    """Checks if there is existing chat data (chat.txt exists and is non-empty)."""
+    has_existing = config.chat_file_path.exists() and config.chat_file_path.stat().st_size > 0
+    return {"has_existing_data": has_existing}
 
 
 @router.post("/api/ingest/folder")
-def ingest_folder(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
+def ingest_folder(
+    background_tasks: BackgroundTasks, 
+    files: List[UploadFile] = File(...),
+    mode: str = "discard"  # "discard", "merge", or "backup_discard"
+):
     """Accepts a multipart upload of files representing a selected WhatsApp export folder (chat log + attachments),
     saves them in a secure temporary folder, runs scanner/parser workflows, optimizes assets, indexes them in SQLite/ChromaDB.
+
+    Depending on the selected mode:
+    - discard: Wipes existing database and starts fresh
+    - merge: Merges the new chats chronologically with the old chats
+    - backup_discard: Backs up the old database and wipes it for a fresh start
     """
     import shutil
+    import sqlite3
+    import datetime
     from core.scanner import LocalFolderScanner
     from core.parser import WhatsAppParser
     from core.preprocessor import Preprocessor
@@ -446,6 +462,49 @@ def ingest_folder(background_tasks: BackgroundTasks, files: List[UploadFile] = F
 
     config.initialize_directories()
     
+    # 1. Determine if existing data is present
+    has_existing_data = config.chat_file_path.exists() and config.chat_file_path.stat().st_size > 0
+    
+    # Core tools
+    preprocessor = Preprocessor()
+    parser = WhatsAppParser()
+    vector_indexer = ChromaDBIndexer()
+    contact_repo = ContactRepository()
+
+    if has_existing_data:
+        if mode == "backup_discard":
+            # Backup the active database
+            try:
+                backup_service.create_backup("pre_ingest_auto_backup")
+            except Exception as backup_err:
+                print(f"[Backup Error] Auto backup failed: {str(backup_err)}")
+            # Discard
+            if config.chat_file_path.exists():
+                config.chat_file_path.unlink()
+            try:
+                vector_indexer.client.delete_collection("whatsapp_chat")
+            except Exception:
+                pass
+            vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
+            with sqlite3.connect(contact_repo.db_path) as conn:
+                conn.execute("DELETE FROM contacts")
+                conn.commit()
+        elif mode == "discard":
+            # Just discard
+            if config.chat_file_path.exists():
+                config.chat_file_path.unlink()
+            try:
+                vector_indexer.client.delete_collection("whatsapp_chat")
+            except Exception:
+                pass
+            vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
+            with sqlite3.connect(contact_repo.db_path) as conn:
+                conn.execute("DELETE FROM contacts")
+                conn.commit()
+        elif mode == "merge":
+            # Will perform the merge in the file processing block below
+            pass
+
     # Setup temporary ingestion directory
     temp_dir = config.output_dir / "temp" / "folder_ingest"
     if temp_dir.exists():
@@ -467,14 +526,50 @@ def ingest_folder(background_tasks: BackgroundTasks, files: List[UploadFile] = F
         scan_result = scanner.scan(temp_dir)
 
         # Parse chat log
-        parser = WhatsAppParser()
         raw_msgs = parser.parse_file(str(scan_result.chat_log_path))
+
+        # Handle chronological log merging if in merge mode
+        if has_existing_data and mode == "merge":
+            old_raw_msgs = parser.parse_file(str(config.chat_file_path))
+            combined_msgs = old_raw_msgs + raw_msgs
+            
+            def get_msg_datetime(msg):
+                try:
+                    norm_date = preprocessor.normalize_date(msg.date_str, msg.time_str)
+                    return datetime.datetime.strptime(norm_date, "%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    return datetime.datetime.min
+
+            # Sort combined messages chronologically
+            combined_msgs.sort(key=get_msg_datetime)
+            
+            # Write merged content back to chat.txt in standard raw format
+            with open(config.chat_file_path, "w", encoding="utf-8") as f:
+                for msg in combined_msgs:
+                    if msg.sender == "System":
+                        f.write(f"{msg.date_str}, {msg.time_str} - {msg.content}\n")
+                    else:
+                        f.write(f"{msg.date_str}, {msg.time_str} - {msg.sender}: {msg.content}\n")
+            
+            # Wipes active vectors and SQLite contacts so that the entire merged conversation re-indexes cleanly
+            try:
+                vector_indexer.client.delete_collection("whatsapp_chat")
+            except Exception:
+                pass
+            vector_indexer.collection = vector_indexer.client.get_or_create_collection(name="whatsapp_chat")
+            with sqlite3.connect(contact_repo.db_path) as conn:
+                conn.execute("DELETE FROM contacts")
+                conn.commit()
+                
+            raw_msgs = combined_msgs
+        else:
+            # If not merging, replace raw chat log completely
+            shutil.copy2(scan_result.chat_log_path, config.chat_file_path)
 
         # Core enrichment tools
         media_optimizer = MediaOptimizer()
         ocr_processor = OCRProcessor()
         vcard_parser = VCardParser()
-        contact_repo = ContactRepository()
         
         # Instantiate LLM client if SDK is enabled, otherwise mock/None
         llm_client = None
@@ -482,7 +577,6 @@ def ingest_folder(background_tasks: BackgroundTasks, files: List[UploadFile] = F
             llm_client = LMStudioHermesClient()
 
         # Align, process and segment the conversation chronologically
-        preprocessor = Preprocessor()
         segments = preprocessor.enrich_conversation(
             raw_msgs=raw_msgs,
             directory_path=temp_dir,
@@ -494,7 +588,6 @@ def ingest_folder(background_tasks: BackgroundTasks, files: List[UploadFile] = F
         )
 
         # Index segments in ChromaDB vector database
-        vector_indexer = ChromaDBIndexer()
         for seg in segments:
             # Build text representation for vector indexing
             convo_lines = []
